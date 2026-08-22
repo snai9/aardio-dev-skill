@@ -2,6 +2,15 @@ import fsys;
 import win;
 import JSON;
 
+//预导入清单：编译器据此把常用库嵌入 exe，否则被测脚本的 import 会 file not found（libEmbed 只扫描本文件用到的库）
+//被测脚本需要其他扩展库时，在此追加一行 import 后重新 F7 编译
+import console;
+import gdip;
+import win.ui;
+import web.view;
+import web.rest.jsonClient;
+import util.testRunner;
+
 _CONSOLE_NO_PAUSE = true;
 
 var args = {};
@@ -100,7 +109,24 @@ print = function(...){
 
 ::Kernel32.SetCurrentDirectory(io.splitpath(scriptPath).dir);
 
-var rets = [call(func)];
+//用 fiber 执行，第 2 参数指定应用根目录（与 IDE F5 行为一致）：
+//被测脚本内 io.fullpath("/") 解析为脚本所在目录，而非 aiRunner.exe 所在目录
+aiRunnerRets = null;
+var fib = fiber.create(function(){
+	aiRunnerRets = [call(func)];
+}, io.splitpath(scriptPath).dir);
+
+var okResume,errResume = fiber.resume(fib);
+
+var rets = aiRunnerRets;
+aiRunnerRets = null;
+
+if(!okResume){
+	result.status = "error";
+	result.error = "fiber error: " ++ tostring(errResume);
+	writeResult();
+	::Kernel32.ExitProcess(1);
+}
 
 result.printOutput = #printOutput ? printOutput : null;
 

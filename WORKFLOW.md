@@ -62,8 +62,10 @@ cat "D:/proj/test.aardio.result.json"
 ### 2.3 约定
 
 - **测试代码只用 `print(...)` 和 `return`** 回传结果，不用 `console.log`（无控制台）
-- **GUI / 死循环脚本**必须用 bash `timeout` 包裹，防止 AI 永久等待
+- **GUI / 死循环脚本**必须用 bash `timeout` 包裹，防止 AI 永久等待；GUI 冒烟脚本按 show → delay → 断言 → close → return 模式自行退出（不进 win.loopMessage）
 - 每次执行都是**全新进程**，天然等效 `loadcodex_clean`（无库缓存问题）
+- 被测脚本内 `io.fullpath("/")` 解析为**脚本所在目录**（aiRunner 用 fiber 第 2 参数指定应用根目录，与 IDE F5 行为一致），项目代码无需为测试加路径回退
+- aiRunner 已预导入嵌入常用库（console/gdip/win.ui/web.view/web.rest.jsonClient/util.testRunner）；被测脚本 import 其他扩展库报 file not found 时，往 `tools/aiRunner/main.aardio` 预导入清单追加一行 import 重新 F7 编译即可
 - 想测试 GUI 逻辑时，参照 autos 的 memoryPatch 思路：**另写一个独立测试脚本**引用被测逻辑，不要在源文件里塞测试代码
 
 ---
@@ -95,7 +97,7 @@ cat "D:/proj/test.aardio.result.json"
 | `http_get` / `download_file` | 网络请求 | Bash curl / WebFetch |
 | `search_web` | 联网搜索 | WebSearch |
 | `github_get_content` 等 | GitHub | gh CLI / WebFetch |
-| `write_memory` / `read_memory` | 长期记忆 | **本仓库 SKILL.md 的陷阱章节就是长期记忆**：踩新坑必须回写 |
+| `write_memory` / `read_memory` | 长期记忆 | **PITFALLS.md 坑库（主）+ SKILL.md 陷阱章节（沉淀）**：踩新坑立即记录、写码前先查 |
 | `load_skill` | 技能包 | 参照 `$AARDIO\lib\autos\skills\` 内置技能（excel/pdf/word/chromiumWebDriver 等）的用法文档 |
 | `analyze_image` | 图像识别 | 视觉模型（如 IDE 自带的多模态能力） |
 | `capture_screenshot` | 截屏 | 让用户截，或写 aardio 脚本用 aiRunner 跑 `gdip.snap` |

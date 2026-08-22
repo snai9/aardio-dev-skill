@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
-<project ver="10" name="aiRunner" libEmbed="true" ui="win" output="aiRunner.exe" FileDescription="aiRunner - aardio 命令行执行器(AI 验证工具)" ProductName="aiRunner" publishDir="/dist/" dstrip="false" local="false" ignored="false">
+﻿<?xml version="1.0" encoding="utf-8"?>
+<project ver="10" name="aiRunner" libEmbed="true" ui="win" output="aiRunner.exe" FileDescription="aiRunner - aardio 命令行执行器(AI 验证工具)" ProductName="aiRunner" publishDir="/dist/" dstrip="false" local="false" ignored="false" CompanyName="单位名称" LegalCopyright="Copyright (C) 作者 2011" InternalName="aiRunner" FileVersion="0.0.1.7" ProductVersion="0.0.1.7">
 	<file name="main.aardio" path="main.aardio" comment="main.aardio"/>
 </project>
