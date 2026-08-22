@@ -5,27 +5,92 @@
 
 ## AI 助手必须遵守的规则
 
-1. **记录时机（强制）**：每次修复了一个报错、发现一个反直觉行为、验证了一个不确定的 API 用法后，**立即**追加一条记录到本文件「记录区」顶部（最新在最上）。做完项目/会话结束前再复查一遍有无遗漏。
-2. **查询时机（强制）**：写 aardio 代码遇到报错或不确定用法时，**先搜本文件**（按关键词/错误信息搜），再搜 SKILL.md 陷阱章节。重复踩已记录的坑属于违规。
+1. **两阶段记录（强制）**：
+   - **踩坑瞬间**：立即追加**草稿条目**到「记录区」顶部——只记现象 + 错误信息原文 + 当前假设，标注 `状态：未验证`。禁止"等解决了再记"（会漏记）
+   - **验证通过后**：就地升级草稿——补根因、解法、❌/✅ 对比，去掉未验证标记。"已解决"= 修复代码通过 `--check` + aiRunner 执行/测试验证；认知类坑 = 实测复现一次且结论能写成 ❌/✅ 对比
+   - 验证不了的禁止凭假设写成结论；会话结束不得遗留未验证草稿（要么升级，要么标注"未能验证"及原因）
+2. **查询时机（强制）**：写 aardio 代码遇到报错或不确定用法时，**先搜本文件**（按关键词/错误信息搜），再搜 SKILL.md 陷阱章节。重复踩已记录的坑属于违规。采纳条目前看状态：**未验证条目是线索不是结论**。
 3. **记录标准**：
    - 有真实报错的：必须粘贴**错误信息原文**（含行号）、根因、正确写法对比（❌/✅）
    - 反直觉行为/API 用法验证：写清场景、错误预期、实际行为、结论
    - 一条只说一个坑，写关键词便于检索（库名、函数名、错误信息片段）
-4. **定期沉淀（可选）**：同类坑积累多了，可归纳进 SKILL.md 对应陷阱章节形成体系，但本文件记录不删除。
+   - 涉及 aardio 安装路径的结论，必须先按 SKILL.md 探测规则确认 `$AARDIO` 再下判断
+4. **定期沉淀（可选）**：同类坑积累多了，可归纳进 SKILL.md 对应陷阱章节形成体系，但本文件记录不删除（误诊条目可订正根因并标注"已订正"）。
 
 ## 记录模板
 
 ```markdown
 ### YYYY-MM-DD 关键词（如：string.match 返回值）
+- 状态：已验证 / 未验证（假设）
 - 场景：在做什么时踩到
 - 现象：错误信息原文 / 反直觉行为
-- 根因：为什么会这样
+- 根因：为什么会这样（未验证时可写当前假设）
 - 解决：❌ 错误写法 → ✅ 正确写法
 ```
 
 ---
 
 ## 记录区（新记录追加在这一行下面）
+
+### 2026-08-22 工程主窗口应命名 mainForm（全局、不加 var），不是 var winform
+- 场景：main.aardio 主窗口写成 `var winform = win.form(...)`
+- 现象：能跑，但不符合工程惯例；查 lib\win\ui\_.aardio 与官方文档确认：运行时**专门识别全局名 mainForm**——mainForm 关闭后自动终止 win.loopMessage 消息循环（autoQuitMessage 逻辑）。示例里大量 `winform` 多是弹窗/演示片段，工程主窗口官方写法是 `mainForm = win.form(...)`（无 var）
+- 解决：❌ `var winform = win.form(...)` → ✅ `mainForm = win.form(...)`（全局），事件里引用 mainForm.xxx
+- 顺带查证：结尾 `return win.loopMessage();` 是官方推荐写法（文档原文"返回值为消息循环退出代码，在 main.aardio 中可以用 return 语句返回"）；不带 return 的 `win.loopMessage();` 也能跑，只是退出码不外传
+
+### 2026-08-22 工程内库不能用 loadcodex 读路径，必须 import 用户库
+- 场景：`var constants = loadcodex(io.fullpath("/lib/constants.aardio"))` 加载工程内业务库
+- 现象：IDE F5 开发态正常运行；F7 编译出的 EXE 运行报错（找不到文件/打开失败弹窗）
+- 根因：loadcodex 是运行时读磁盘文件，不参与编译嵌入；编译后 EXE 旁没有 lib 目录就失败。官方模式（见 examples\Network\protobuf\SampleProjects）是：库文件放工程 `lib\`，文件内 `namespace 库名{...}` 定义成员，主程序 `import 库名` 导入，libEmbed 编译时自动嵌入
+- 解决：❌ `loadcodex(io.fullpath("/lib/xx.aardio"))` → ✅ 库文件 `namespace calculator{...}` + 主程序 `import calculator;` 后用 `calculator.xxx` 调用
+
+### 2026-08-22 namespace 内访问其他库/全局对象必须加 .. 前缀
+- 场景：calculator.aardio 改成用户库后，namespace calculator 内引用 constants、math
+- 现象：不加前缀写 `constants.xxx` 会解析为 self.constants 得到 null 运行报错（与 SKILL 26.29 同类，库文件场景同样适用）
+- 根因：命名空间内名字查找链不到全局表
+- 解决：库文件 namespace 内一律 `..constants.` / `..math.` / `..string.` / `..table.`；文件顶部的 `import xxx;` 写在 namespace 块外面
+
+### 2026-08-22 IDE 保存工程会覆盖 default.aproj，手工加的 lib 文件夹条目会丢
+- 场景：手工往 default.aproj 加 `<folder name="lib" path="lib" embed="true" .../>`，之后在 IDE 里编译/保存工程
+- 现象：条目被 IDE 重新生成的内容覆盖丢失
+- 根因：aproj 由 IDE 管理，手工改完后 IDE 不知情
+- 解决：在 IDE 工程面板里把 lib 目录"添加到工程"（或最后再手工补条目后立刻编译）；用 import 导入的库，编译器在发布时一般也会自动包含，可先用 F7 验证 EXE 是否正常再决定是否必须登记
+
+### 2026-08-22 JSON.stringify 把数值键哈希表序列化成 {}
+- 场景：web.view 界面，把 `居民养老缴费档次补贴 = { [100]=30; [200]=40; ... }` 直接 JSON.stringify 传给 JS
+- 现象：输出 `{"补贴表":{}}`，键值全部丢失；JS 侧下拉显示"补贴 undefined 元"
+- 根因：aardio 的 JSON 序列化不处理数值键的哈希表成员（实测 `JSON.stringify({[100]=30,[200]=40})` → `{}`）
+- 解决：❌ 直接传数值键表 → ✅ 先转数组 `for(i,g in 档次列表){ table.push(arr,{g=g;s=补贴[g]}) }` 再 stringify；另注：aardio 侧 `JSON.parse` 回来的数组是 0 基（`#arr` 为 0），aardio 内部别对回传数组用 1 基下标
+
+### 2026-08-22 模式匹配中 `:` 匹配任意多字节字符，查普通冒号必须转义
+- 场景：用 `string.find(json, '"g":100')` 验证序列化输出是否包含该片段
+- 现象：目标串明明确认包含 `"g":100`，find 却返回 null
+- 根因：aardio 模式里 `:` 是特殊字符（匹配任意多字节字符），不是字面冒号
+- 解决：字面冒号写 `'\:'`，或用 `string.find(str, pat, 1, true)`（第4参数 true 关闭模式匹配按纯文本查找）
+
+### 2026-08-22 布尔值不能与字符串 `++` 拼接
+- 场景：`print("ok=" ++ ok1)`，ok1 是 boolean
+- 现象：`{Attempt to}:concatenate {Type}:boolean`
+- 根因：aardio 的 `++` 不自动转换 boolean（与 SKILL 26.5 checkbox.checked 同类坑）
+- 解决：先 `tostring(ok1)` 再拼接
+
+### 2026-08-22 双引号字符串中 `\"` 不是转义引号，会直接终结字符串
+- 场景：`string.find(j, "\"g\":100")`（想在双引号串里嵌引号）
+- 现象：编译报 `{Expected}:')' {Near}:'g'`
+- 根因：双引号是原样字符串，`\` 不转义，`\"` 里的 `"` 就是字符串结束符
+- 解决：嵌引号改用单引号字符串 `'"g":100'`，或反引号
+
+### 2026-08-22 web.view 中 JS 必须用 aardio.xxx() 调用，不能写 external.xxx()
+- 场景：web.view 界面，JS 里写 `external.getConfig().then(...)` 调 aardio 函数
+- 现象：`external.getConfig` 为 undefined，顶层 JS 报错中止 → 表现为"按钮点击无反应、下拉框全空"（lib/web/view/_.aardio 中 `window.external = { invoke: ... }` 是 web.view 内部占用的 postMessage 接口）
+- 根因：`wb.external = {...}` 赋值后，JS 侧通过预注入的 `window.aardio`（hostObjects 代理）访问，函数调用返回 Promise；`external` 这个名字被库自己占了
+- 解决：❌ `external.funcName(args)` → ✅ `aardio.funcName(args).then(fn).catch(errFn)`；`export()` 导出的函数同样返回 Promise
+
+### 2026-08-22 `..` 字符串拼接两侧必须留空格
+- 场景：测试脚本 `tostring(actual).." expected="..tostring(expected)`（无空格）
+- 现象：编译报 `{Expected}:')' ... {Near}:'..'`；写成 ` .. `（两侧有空格）则正常
+- 根因：`)..` 连写时 `..` 与括号粘连，aardio 无法按全局/拼接操作符正确切词
+- 解决：拼接统一用 `++`（无空格也稳），或用 `..` 时两侧留空格
 
 ### 2026-08-22 引用不存在的过时 aardio 路径（E:\daini\aardio）
 - 场景：测试会话诊断 import 失败时，声称"本机 E:\daini\aardio\lib\util 不存在该文件"并据此误诊
