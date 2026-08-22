@@ -252,6 +252,7 @@ description: "aardio 开发行为约束与用户偏好。当编写 aardio 代码
   - 例：`main.aardio` → `main_注释.aardio`，`collect.aardio` → `collect_注释.aardio`
 - **修改源码时必须同步更新注释版**，不能让注释版落后于源码
 - **新增源码文件时必须同时创建注释版**
+- **注释版不参与编译**：aardio 发布只编译 aproj 中显式列出的文件，注释版默认不进 exe（这是期望行为）。**禁止把注释版加进 aproj**（尤其 embed=true 目录）——白白增大体积且明文暴露源码；注释版仅用于人学习与 AI 复习项目逻辑
 
 ### 6.2 注释风格要求
 
