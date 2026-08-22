@@ -1,0 +1,132 @@
+import fsys;
+import win;
+import JSON;
+
+_CONSOLE_NO_PAUSE = true;
+
+var args = {};
+if(type(_ARGV)=="table"){
+	for(i=1;#_ARGV;1){
+		if(#tostring(_ARGV[i])) table.push(args,tostring(_ARGV[i]));
+	}
+}
+
+if(!#args && #_CMDLINE){
+	for(v in string.split(_CMDLINE," ")){
+		if(#v) table.push(args,v);
+	}
+}
+
+var scriptPath,outPath,checkOnly;
+var i = 1;
+while(i <= #args){
+	var a = args[i];
+	if(a=="--check"){
+		checkOnly = true;
+	}
+	elseif(a=="--out"){
+		i++;
+		outPath = args[i];
+	}
+	elseif(a != null && !scriptPath){
+		scriptPath = a;
+	}
+	i++;
+}
+
+var printOutput = {};
+var result = {status = "error"};
+
+var writeResult = function(){
+	var ok,json = call(JSON.stringify,null,result,true,true);
+	if(!ok || !json){
+		result.result = null;
+		result.printOutput = #printOutput ? printOutput : null;
+		ok,json = call(JSON.stringify,null,result,true,true);
+		if(!ok || !json){
+			json = '{"status":"error","error":"result not serializable"}';
+		}
+	}
+	if(!outPath){
+		outPath = scriptPath ? (scriptPath ++ ".result.json") : (io.fullpath("/") ++ "aiRunner.result.json");
+	}
+	string.save(outPath,json);
+}
+
+if(!scriptPath){
+	result.error = "usage: aiRunner.exe <script.aardio> [--check] [--out result.json]";
+	writeResult();
+	::Kernel32.ExitProcess(1);
+}
+
+scriptPath = io.fullpath(scriptPath);
+
+if(!io.exist(scriptPath,0)){
+	result.error = "file not found: " ++ scriptPath;
+	writeResult();
+	::Kernel32.ExitProcess(1);
+}
+
+var code = string.load(scriptPath);
+if(!code){
+	result.error = "failed to load file: " ++ scriptPath;
+	writeResult();
+	::Kernel32.ExitProcess(1);
+}
+
+var func,err = loadcode(code);
+if(!func){
+	result.status = "compileError";
+	result.error = tostring(err);
+	writeResult();
+	::Kernel32.ExitProcess(1);
+}
+
+if(checkOnly){
+	result.status = "ok";
+	result.comment = "compile ok";
+	writeResult();
+	::Kernel32.ExitProcess(0);
+}
+
+print = function(...){
+	var vs = {...};
+	var parts = {};
+	for(i=1;#vs;1){
+		table.push(parts,tostring(vs[i]));
+	}
+	table.push(printOutput,string.join(parts," "));
+}
+
+::Kernel32.SetCurrentDirectory(io.splitpath(scriptPath).dir);
+
+var rets = [call(func)];
+
+result.printOutput = #printOutput ? printOutput : null;
+
+if(rets[1]){
+	result.status = "ok";
+	var vals = {};
+	for(i=2;#rets;1){
+		table.push(vals,rets[i]);
+	}
+	if(#vals){
+		result.result = #vals==1 ? vals[1] : vals;
+	}
+}
+else{
+	result.status = "error";
+	result.error = tostring(rets[2]);
+}
+
+writeResult();
+
+if(win[["_form"]]){
+	win._form.destroyAll();
+}
+
+var exitCode = 1;
+if(result.status=="ok"){
+	exitCode = 0;
+}
+::Kernel32.ExitProcess(exitCode);

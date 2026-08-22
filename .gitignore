@@ -1,0 +1,8 @@
+# aardio 编译中间产物
+tools/aiRunner/.build/
+tools/aiRunner/dist/
+# aiRunner 执行结果文件（运行时生成）
+*.result.json
+aiRunner.result.json
+# 编译出的执行器（每人自行 F7 编译，见 README 2.2；如想自带 exe 可删除下面这行）
+tools/aiRunner.exe
