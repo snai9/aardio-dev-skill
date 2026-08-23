@@ -45,6 +45,12 @@ aardio 开发知识库 + 规则 + 工具链，供第三方 IDE（ZCode / Claude 
 1. 用 aardio IDE 打开 `tools/aiRunner/default.aproj`
 2. 按 **F7** 发布 → 得到 `tools/aiRunner/dist/aiRunner.exe`
 3. 复制为 `tools/aiRunner.exe`（仓库 tools 目录下）
+4. 创建 lib junction（让 aiRunner 能加载本机 aardio 的任何库）：
+
+```powershell
+# PowerShell，替换仓库路径；Target 换成你的 aardio 安装目录
+New-Item -ItemType Junction -Path "<仓库路径>\tools\lib" -Target "E:\aardio\lib"
+```
 
 验证（Git Bash）：
 
@@ -52,9 +58,12 @@ aardio 开发知识库 + 规则 + 工具链，供第三方 IDE（ZCode / Claude 
 echo 'return 1+1;' > /tmp/t.aardio
 "<仓库路径>/tools/aiRunner.exe" /tmp/t.aardio   # 注意：Windows 下用 C:/... 路径
 cat /tmp/t.aardio.result.json                    # 应显示 {"result":2,"status":"ok"}
+
+# 验证 junction（应能列出大量库目录）
+ls "<仓库路径>/tools/lib"
 ```
 
-没有这一步，AI 只能"写"不能"跑"，效果会大幅退化。
+没有这一步，AI 只能"写"不能"跑"，效果会大幅退化。junction 创建后：任何标准库/扩展库（含以后 IDE 更新新增的）开箱即用，**无需再为被测脚本的新库改 aiRunner 预导入清单、重新编译**。
 
 ---
 

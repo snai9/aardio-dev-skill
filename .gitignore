@@ -6,3 +6,5 @@ tools/aiRunner/dist/
 aiRunner.result.json
 # 编译出的执行器（每人自行 F7 编译，见 README 2.2；如想自带 exe 可删除下面这行）
 tools/aiRunner.exe
+# lib 目录 junction（指向本机 $AARDIO\lib，每人自建，见 README 2.3；严禁提交）
+tools/lib/

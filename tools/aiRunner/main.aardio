@@ -2,8 +2,9 @@ import fsys;
 import win;
 import JSON;
 
-//预导入清单：编译器据此把常用库嵌入 exe，否则被测脚本的 import 会 file not found（libEmbed 只扫描本文件用到的库）
-//被测脚本需要其他扩展库时，在此追加一行 import 后重新 F7 编译
+//预导入清单（可选加速项）：这些库直接嵌入 exe，加载最快。
+//未列出的库会在运行时通过 tools\lib junction（→ $AARDIO\lib）从磁盘解析，同样可用，
+//因此本清单不再需要为"被测脚本 import 新库"而维护（junction 方案见 README 2.3 / WORKFLOW 2.3）
 import console;
 import gdip;
 import win.ui;

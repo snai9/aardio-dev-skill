@@ -34,6 +34,14 @@
 1. 用 aardio IDE 打开 `tools/aiRunner/default.aproj`
 2. 按 **F7** 发布 → 得到 `tools/aiRunner/dist/aiRunner.exe`
 3. 复制到仓库 `tools/aiRunner.exe`（下文示例以 `<repo>/tools/aiRunner.exe` 代称）
+4. **创建 lib junction（关键，一次搞定所有库）**：
+
+```powershell
+# PowerShell，路径换成你的实际仓库路径和 aardio 安装目录
+New-Item -ItemType Junction -Path "<仓库路径>\tools\lib" -Target "$env:AARDIO_HOME\lib"
+```
+
+创建后，aiRunner 运行时任何 `import` 都能从本机 aardio 的 lib 目录解析（含扩展库），**无需再为被测脚本的新库改预导入清单、重新编译**；且 junction 指向真实目录，aardio IDE 更新后自动同步新库。库内资源（如 `$/~/lib/fonts/.res/*.ttf`）也经此路径解析。已验证：fonts.fontAwesome + gdip.fontIcoBuilder 生成多分辨率 ico、项目私有用户库（脚本目录 `\lib`）import 均正常。
 
 ### 2.2 用法
 
@@ -64,8 +72,8 @@ cat "D:/proj/test.aardio.result.json"
 - **测试代码只用 `print(...)` 和 `return`** 回传结果，不用 `console.log`（无控制台）
 - **GUI / 死循环脚本**必须用 bash `timeout` 包裹，防止 AI 永久等待；GUI 冒烟脚本按 show → delay → 断言 → close → return 模式自行退出（不进 win.loopMessage）
 - 每次执行都是**全新进程**，天然等效 `loadcodex_clean`（无库缓存问题）
-- 被测脚本内 `io.fullpath("/")` 解析为**脚本所在目录**（aiRunner 用 fiber 第 2 参数指定应用根目录，与 IDE F5 行为一致），项目代码无需为测试加路径回退
-- aiRunner 已预导入嵌入常用库（console/gdip/win.ui/web.view/web.rest.jsonClient/util.testRunner）；被测脚本 import 其他扩展库报 file not found 时，往 `tools/aiRunner/main.aardio` 预导入清单追加一行 import 重新 F7 编译即可
+- 被测脚本内 `io.fullpath("/")` 解析为**脚本所在目录**（aiRunner 用 fiber 第 2 参数指定应用根目录，与 IDE F5 行为一致），项目代码无需为测试加路径回退；项目私有用户库（脚本目录下 `\lib`）可直接 import
+- 未嵌入的库经 `tools\lib` junction（→ `$AARDIO\lib`）从磁盘解析，**任何标准库/扩展库开箱即用**；若报 file not found，先确认 junction 存在（`ls <repo>/tools/lib`），不要急着改预导入清单重新编译
 - 想测试 GUI 逻辑时，参照 autos 的 memoryPatch 思路：**另写一个独立测试脚本**引用被测逻辑，不要在源文件里塞测试代码
 
 ---

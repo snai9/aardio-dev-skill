@@ -32,7 +32,15 @@
 
 ## 记录区（新记录追加在这一行下面）
 
-### 2026-08-22 工程主窗口应命名 mainForm（全局、不加 var），不是 var winform
+### 2026-08-23 aiRunner import 任意库的通用解法：tools\lib junction（终解）
+- 状态：已验证
+- 场景：新项目用 `fonts.fontAwesome` + `gdip.fontIcoBuilder` 生成 APP 图标，两库都不在 aiRunner 预导入清单，`import failed ! file not found`
+- 现象：旧方案是往 main.aardio 预导入清单加 import 再 F7 重编译——每个新库维护一次，不可持续
+- 根因：libEmbed 编译只嵌入 main.aardio 静态 import 过的库；**但编译后的 exe 运行时 import 找不到内嵌库会回退到 exe 旁 `~/lib/` 磁盘目录解析**，库内 `$"~/lib/..."` 资源引用也经此路径解析
+- 解决：`New-Item -ItemType Junction -Path <仓库>\tools\lib -Target $AARDIO\lib` 一次创建永久生效；aardio IDE 更新后新库自动可用。已实测：fontIcoBuilder 生成 102KB 多分辨率 .ico 成功；项目私有用户库（脚本目录 `\lib`）import 成功。**报 file not found 先查 junction 存在（`ls <仓库>/tools/lib`），不要急着改预导入清单重编译**
+- 附：junction 严禁提交 git（已加入 .gitignore）
+
+### 2026-08-23 工程主窗口应命名 mainForm（全局、不加 var），不是 var winform
 - 场景：main.aardio 主窗口写成 `var winform = win.form(...)`
 - 现象：能跑，但不符合工程惯例；查 lib\win\ui\_.aardio 与官方文档确认：运行时**专门识别全局名 mainForm**——mainForm 关闭后自动终止 win.loopMessage 消息循环（autoQuitMessage 逻辑）。示例里大量 `winform` 多是弹窗/演示片段，工程主窗口官方写法是 `mainForm = win.form(...)`（无 var）
 - 解决：❌ `var winform = win.form(...)` → ✅ `mainForm = win.form(...)`（全局），事件里引用 mainForm.xxx
