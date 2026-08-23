@@ -32,6 +32,58 @@
 
 ## 记录区（新记录追加在这一行下面）
 
+### 2026-08-23 ide.setProjectProperty 远程设图标：函数可用，坑在反斜杠参数【终案·用户订正】
+- 状态：已验证（完整闭环：正斜杠 "/res/app.ico" 经 setProjectProperty 远程设置 → F7 编译成功 → EXE 图标正常显示，用户确认"成功"。用户订正：机制本身可用，此前失败纯因 "\\res\\app.ico" 多传了一个 \）
+- 参数规则（ide 命令管道会二次处理反斜杠）：
+  - ❌ `"\res\app.ico"`（单杠）→ `\r`、`\a` 被转义成控制符，路径损坏
+  - ❌ `"\\res\\app.ico"`（双杠）→ IDE 存成 `\\res\app.ico`（多一个 \）
+  - ✅ `"/res/app.ico"`（正斜杠）→ 原样到达，Windows 兼容
+- 关联：IDE 内存属性保存工程前不落盘；删除/移动图标文件后须保证 aproj 与 IDE 内存一致，悬空路径导致 F7 报错
+- 用法：`import ide; ide.setProjectProperty("icon","\\app.ico")`（IDE 需运行且工程已打开；aiRunner 借 tools\lib junction 可 import ide）
+- 意义：绕开"外部改 aproj 不被 IDE 读取"——让 IDE 自己改内存配置并负责写盘；已并入 gen_icon.aardio（生成图标后自动设置）
+- 教训：验收 IDE 状态别信命令回读的字符串长度，信 aproj 磁盘内容 + 属性面板 + 编译产物
+
+### 2026-08-23 aardio 双引号字符串：`\a` 原样保留，但 `\\` 会折叠成一个反斜杠
+- 状态：已验证（实测：#"\a"=2 原样；#"\\a"=2 折叠；#"\app.ico"=8 原样）
+- 场景：写含反斜杠的路径字符串时想当然以为双引号内一切原样
+- 根因：双引号"不转义"是针对 `\a \n \t` 等单反斜杠组合；`\\` 是例外，会转义为 `\`
+- 解决：路径里若需要字面双反斜杠（如传给会二次解析转义的通道），写 `\\\\`；普通路径 `"C:\folder\"` 照旧安全
+
+### 2026-08-23 EXE 里搜到图标字节 ≠ 图标生效（res 资源文件嵌入假阳性）【订正上一条】
+- 状态：已验证（app.ico 文件头 64B 在 EXE @2372856 连续整块命中 = res 文件嵌入实锤；改名 test.exe 图标依旧不显示）
+- 场景：上一条"图标缓存"结论被证伪——用户复制改名 test.exe 后仍显示默认图标
+- 根因：用户在 IDE 里"同步现有目录"把 res\app.ico 同步进了工程，F7 时 res 文件夹 embed="true" 把 **ico 文件本体当普通资源数据嵌入 EXE**。拿 ico 帧字节去 EXE `find` 命中的全是这块文件数据，误判为"PE 图标资源存在"
+- 正确验证法：① 先搜 **ico 文件头+完整文件连续命中**排除文件嵌入假阳性；② 再解析 PE 资源目录树确认 RT_GROUP_ICON 且其引用的 RT_ICON 条目有效；③ 最终以 Explorer/任务栏显示为准
+- 真根因（见下一条）：编译时 IDE 用的是内存里的旧工程配置，icon 属性根本没参与本次编译
+
+### 2026-08-23 IDE 打开工程时外部改 aproj 不生效，F7 用内存旧配置
+- 状态：未验证（根因推断，证据充分：用户 09:42 编译，我 09:41 才写磁盘 aproj icon="\app.ico"；当前磁盘 aproj 已是 icon="\app.ico"，待用户重开工程后 F7 验证）
+- 场景：手工/脚本改 default.aproj 的 icon 等工程属性，IDE 里直接 F7
+- 现象：编译出的 EXE 无图标（icon 属性未采用）；且 IDE 随后保存工程会**反向覆盖**磁盘 aproj（此前 lib 文件夹条目两次被覆盖丢失，同一机制）
+- 根因：aproj 由 IDE 内存模型管理，不自动重读磁盘外部修改；保存时以内存为准回写
+- 解决（待验证）：**关闭工程重新打开（或重启 IDE）** 让 IDE 读到磁盘新 aproj，再 F7；最稳妥是直接在 IDE 工程属性界面里设置图标，让 IDE 自己写 aproj
+
+### 2026-08-23 F7 后 EXE 图标"没生效"多半是 Explorer 图标缓存【已订正】
+- 状态：已订正——本条结论错误：字节命中实为 res 资源文件嵌入（假阳性），非 PE 图标生效；真根因见上面两条。保留原文仅作误诊教训：**"数据在 EXE 里"必须先排除"作为资源文件整块嵌入"再谈图标资源生效**
+- 状态（旧）：已验证（字节级解析 dist EXE 的 PE 资源：RT_ICON/RT_GROUP_ICON 存在，app.ico 六帧数据逐字节命中；用户视觉反馈"没图标"为缓存误导，复制改名后即显示）
+- 场景：aproj 配好 icon="\app.ico"、F7 编译成功，但资源管理器里 EXE 仍显示旧默认图标
+- 根因：同名同路径覆盖编译时，Windows Explorer 沿用图标缓存，不重新读取 PE 资源
+- 验证/解决：
+  ① 不信视觉信内部状态：Python 解析 PE（数据目录第 2 项 → .rsrc → 遍历 RT_ICON=3/RT_GROUP_ICON=14），或直接把 app.ico 各帧字节拿去 EXE 里 `find`（256 帧是 PNG 可直接搜）
+  ② 让缓存刷新：EXE 复制改名查看 / 重命名再改回 / 重启 explorer；桌面快捷方式缓存单独算
+- 附：IDE 工程树不自动感知磁盘新增文件，需在对应文件夹右键"同步现有目录"（正常机制）；图标文件放工程根目录 + `icon="\app.ico"` 是官方范例（WinAsar）布局
+
+### 2026-08-23 官方图标生成：gdip.fontIcoBuilder 一行生成 .ico
+- 状态：已验证（aiRunner 实跑生成 res/app.ico 成功，6 档尺寸 16~256，103KB；256 帧视觉核验为青绿圆角底+白色¥，无缺陷）
+- 场景：给工程加程序图标，不想手画/外部工具（用户提示"新版 aardio 能自己生成图标"，检索 lib 后确认）
+- 用法：
+  `import fonts.fontAwesome; import gdip.fontIcoBuilder;`
+  `gdip.fontIcoBuilder(fonts.fontAwesome.family,'\uF157',0.62,0xFFFFFFFF,0xFF0F766E,52,[16,32,48,64,128,256]).save("/res/app.ico")`
+  参数：字体家族、字形码点、字形缩放、字体色（ARGB 必须带 0xFF）、背景色、圆角（-1=圆形背景）、尺寸数组（默认 [16,32,48,64,128,256]）；返回 string.builder 可直接 .save()
+- 官方范例：`$AARDIO\examples\Graphics\fontIcoBuilder.aardio`；底层组装器是 gdip.icoBuilder（可 push 任意 gdip.bitmap 自绘图标）
+- 接入工程：default.aproj 根节点 `icon="\res\app.ico"`（路径以 `\` 开头相对工程根，参照 examples WinAsar 的 `icon="\app.ico"`）
+- 注意：每种目标尺寸独立光栅化（不是大图缩放），小尺寸更清晰；256 帧为 PNG 压缩格式
+
 ### 2026-08-23 aiRunner import 任意库的通用解法：tools\lib junction（终解）
 - 状态：已验证
 - 场景：新项目用 `fonts.fontAwesome` + `gdip.fontIcoBuilder` 生成 APP 图标，两库都不在 aiRunner 预导入清单，`import failed ! file not found`
