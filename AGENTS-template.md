@@ -4,8 +4,9 @@
 
 ---
 
-请严格按照 aardio-dev-skill 仓库（https://github.com/snai9/aardio-dev-skill）中的 WORKFLOW.md、RULES.md、SKILL.md 开发本 aardio 项目，规则优先级高于知识。要点：
+请严格按照 aardio-dev-skill 仓库中的 WORKFLOW.md、RULES.md、SKILL.md 开发本 aardio 项目，规则优先级高于知识。要点：
 
+- 本机仓库路径：【如 E:\aardio\aardio-dev-skill-master，必填——AI 优先从这里读三个规则文件；远程 https://github.com/snai9/aardio-dev-skill 仅作备用】
 - 写码前先读 PITFALLS.md 踩坑记录（先查坑，禁止重复踩已记录的坑）
 - 写入/修改 .aardio 文件前必须 aiRunner `--check` 编译检查；逻辑代码必须 aiRunner 执行验证
 - 踩坑立即按两阶段规则记录到 PITFALLS.md；注释版按已验证批次同步
