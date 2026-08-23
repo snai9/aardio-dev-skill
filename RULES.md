@@ -244,6 +244,20 @@ description: "aardio 开发行为约束与用户偏好。当编写 aardio 代码
 
 流程是迭代的：Observe → Orient → Decide → Act。根据证据持续调整计划，尽最大努力交付高质量结果；关键任务不要吝惜必要的推理和验证，但始终避免无用功。
 
+### 5.8 长任务状态检查点（防断连/上下文丢失，强制）
+
+> 提炼自 aardio 作者经验：加密思考（思考链不可见）的模型做复杂任务必然翻车——思考过程不进上下文，后续步骤拿不到前面结论。解法是强制在**回复正文**输出状态检查点。
+
+- 复杂多步任务中，**每完成一个阶段必须在回复正文输出状态检查点**：已完成里程碑、关键决策及理由、已结论事项、下一步计划
+- 作用：上下文压缩/会话中断/关掉重开后，凭最后一条检查点 + PITFALLS.md 即可原地恢复接力，进度不丢
+- 需要用户强制模型执行时，可在提示词末尾追加以下**固定约束（原文，勿改动）**：
+
+```
+CRITICAL CONSTRAINT: You must explicitly output state checkpoints in your response body—including incremental milestones, decision logs, and resolved action items/conclusions. My network is highly unstable, and ensuring session state persistence and fault tolerance is mission-critical to prevent complete progress wipeout from disconnects like last time.
+```
+
+- 注意：思考链可见的模型同样受益（防上下文压缩丢细节）；检查点要**增量精炼**，不要整段复读历史
+
 ## 六、注释版文件规则
 
 ### 6.1 必须同步维护注释版
@@ -372,6 +386,7 @@ else {
 - 测试代码只用 `print(...)` 和 `return` 回传，**禁止 `console.log`**
 - GUI 脚本 / 可能死循环的脚本必须用 `timeout` 包裹执行
 - 编译/运行错误必须**基于错误信息（含行号）修复**，禁止盲改
+- **GUI/图像验证优先读取程序内部状态**（`return 状态变量`、`getPixel` 像素断言）；视觉模型识别结果是辅助证据不是结论，据其反推代码 bug 前必须先用内部状态交叉验证（幻觉防护，详见 WORKFLOW 第四章）
 - 新踩的坑必须**立即**追加到 `PITFALLS.md`（唯一坑库，追加式，含错误原文/根因/❌✅对比，格式见该文件）——这是最高优先级规则之一，详见第十章
 
 ## 十、踩坑记录（强制，最高优先级之一）
