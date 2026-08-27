@@ -217,3 +217,29 @@ aardio 官方助手更新很快（autos.aardio、lib/autos/ 都会随 IDE 更新
 - **不求全量搬运，只同步"影响代码生成质量"的部分**：提示词措辞 > 工具路由 > 新库新 API > 其他
 - 官方文档/源码**不分发**：本仓库只放提炼结论与原文引用位置（`$AARDIO` 在用户本机），遵守官方文档版权声明
 - 同步时让 AI 执行即可："请按 WORKFLOW.md 第六章同步机制，对比本机 autos 源码更新本仓库"
+
+---
+
+## 七、坑记录与知识的三层分工（防记错地方）
+
+| 层 | 文件 | 记什么 | 谁更新 |
+|---|---|---|---|
+| 实战坑库 | 本仓库 `PITFALLS.md` | **用户项目中真实踩的坑**（错误原文、根因、❌/✅、场景），AI 写码前必查 | AI 会话（两阶段强制规则，见 RULES 十） |
+| 通用教科书 | aalint 自带 `$AARDIO\project\aalint\docs\aardio-syntax-traps.md` | **语言级通用语法陷阱**（约 40 主题，提炼自官方文档），是 aalint `--lint` 规则的候选清单 | **只读不写**——它随 aalint 源码分发，不属于本仓库 |
+| 机器执行 | `aalint --lint`（12 条规则） | 能静态检测的陷阱直接工具抓，不依赖记录 | 随 aalint 版本更新 |
+| 沉淀层 | 本仓库 `SKILL.md` 陷阱章节 | 稳定复用的语言/库知识体系 | AI 会话（可选，从 PITFALLS 归纳） |
+
+**铁律**：踩坑记录**只进 PITFALLS.md**，禁止写进 aalint 的 traps 文档（那是别人项目的出厂说明书）；发现 lint 漏报某类陷阱，记 PITFALLS.md 即可，不改 aalint 源码。
+
+---
+
+## 八、aalint 更新与升级（纯外部依赖，不影响仓库逻辑）
+
+aalint 是独立项目（`$AARDIO\project\aalint\`），作者更新后：
+
+1. 用 IDE 打开 `default.aproj` 按 **F7** 重编译
+2. 把 `dist\aalint.exe`（及新版 `aalint-ai-guide.md`）拷贝到 `$AARDIO\`——**完事，本仓库任何文件都不用改**
+3. 建议顺手跑一遍核心场景回归（编译检查/`--run --capture`/`--lint`/`--eval`）确认新版本正常
+4. 唯一需要动仓库的情况：新版本**改了命令行接口**（参数改名/删除）→ 让 AI 对照 `aalint --ai-guide` diff WORKFLOW 2.2 速查表；`--lint` **新增规则** → 无需动仓库（AI 自动受益），可在 PITFALLS.md 记一条"aalint x.x 新增 xx 规则"
+
+aiRunner（仓库内置备用执行器）同理：它是本仓库自己的代码，仓库更新它随仓库走，与 aalint 互不影响。
