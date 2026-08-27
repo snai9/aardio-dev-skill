@@ -32,6 +32,17 @@
 
 ## 记录区（新记录追加在这一行下面）
 
+### 2026-08-23 验证工具切换决策：aiRunner → aalint（主），aiRunner 降级备用
+- 状态：已验证（aalint v2.4.0 实测 10 场景：编译检查/陷阱 lint（str-plus、assign-in-cond、try-return 均命中）/执行捕获/`--eval`/`--api gdip.bitmap`/`--imports`/`--fix --dry-run`/`--run-isolated` 死循环隔离终止/`--ui-smoke` PASS/`--json`）
+- 场景：用户发现 `E:\aardio\project\aalint` 项目并提问"是否比 aiRunner 更好、要不要换"
+- 结论：**换**。aalint 严格覆盖并超出 aiRunner 全部能力：内置超时（免 bash timeout）、崩溃子进程隔离（--run-isolated）、aifix 自动修复（--fix + dry-run + diff，补上此前承认的"无等效"差距）、12 条陷阱 lint（SKILL 陷阱表的 linter 化）、--api 查库签名、--imports 依赖检查、--symbols 大纲、--ui-smoke/--ui-flow/--setup mock 注入、--json stdout 输出。核心机制同源（fiber 应用根目录、call 捕获返回值）
+- aiRunner 保留为备用（aalint 缺失时启用，WORKFLOW 2.4）；其 fiber 根目录与 junction 探索过程的知识价值已沉淀在历史记录中
+- aalint 已知限制（使用时绕开）：
+  - `--api` 只查**库文件**形式（`gdip.bitmap` ✅ / `io.exist` ❌ 报"库未找到"）——内置命名空间成员改用 `--eval` 或 Grep lib 源码
+  - `--imports` 对**内置库**（io/string 等免 import）误报 MISSING，忽略即可
+  - `--run` 死循环场景在 Git Bash 下外层 `timeout` 命令仍可能整条返回 124（内置 `--timeout` 已在子进程层面兜住，优先信任内置超时 + `--run-isolated`）
+- 安装位置：`$AARDIO\aalint.exe`（与 aardio.exe 同目录，经 `~/lib/` 找到全部标准库，免 junction）
+
 ### 2026-08-23 ide.setProjectProperty 远程设图标：函数可用，坑在反斜杠参数【终案·用户订正】
 - 状态：已验证（完整闭环：正斜杠 "/res/app.ico" 经 setProjectProperty 远程设置 → F7 编译成功 → EXE 图标正常显示，用户确认"成功"。用户订正：机制本身可用，此前失败纯因 "\\res\\app.ico" 多传了一个 \）
 - 参数规则（ide 命令管道会二次处理反斜杠）：

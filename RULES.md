@@ -372,20 +372,21 @@ else {
 
 > 详见 `WORKFLOW.md`。本节为强制规则。
 
-### 9.1 aiRunner 执行器
+### 9.1 aalint 验证工具（主）与 aiRunner（备）
 
-- 本机执行器路径：仓库内 `tools/aiRunner.exe`（由 `tools/aiRunner/` 用 IDE 按 F7 编译；若用户尚未编译或路径不同，先确认再使用）
-- 编译检查：`aiRunner.exe <file.aardio> --check`
-- 执行取结果：`timeout 30 aiRunner.exe <file.aardio>`，结果在 `<file.aardio>.result.json` 的 `status/error/printOutput/result` 字段
-- 每次执行都是全新进程，等效 `loadcodex_clean`，无库缓存问题
+- **主工具 aalint**：`$AARDIO\aalint.exe`（与 aardio.exe 同目录，能找到全部标准库）。源码在 `$AARDIO\project\aalint\`，随 aardio 更新而更新；用法速查：`aalint --ai-guide`
+- **备用工具 aiRunner**：仓库 `tools/aiRunner.exe`。仅当 aalint 缺失/损坏时临时使用（用法见 WORKFLOW 2.4）
+- **发现新陷阱必须回写**：SKILL.md 的陷阱章节就是长期记忆，踩新坑立即回写
 
 ### 9.2 强制验证闭环
 
-- **写入或修改任何 `.aardio` 文件前，必须先用 aiRunner `--check` 编译检查**（等效 autos：编译通过才写入）
-- **写完逻辑代码必须用 aiRunner 执行验证**，用 `print`/`return` 观察关键值，禁止"写完就交"
+- **写入或修改任何 `.aardio` 文件前，必须先 `aalint <file>` 编译检查**（等效 autos：编译通过才写入）
+- **写完逻辑代码必须执行验证**：`aalint --run --capture --timeout 10 <file>`，用 `print`/`return` 观察关键值，禁止"写完就交"；机器可读结果加 `--json`（以退出码为准）
+- **不确定 API 行为时**：`aalint --eval "表达式"` 快速验证，或 `aalint --api 库名` 查签名，或 `aalint --imports <file>` 验证依赖
+- **交付前跑陷阱检查**：`aalint --lint <file>`（12 条 aardio 专属规则），警告必须逐条确认或修复
+- **崩溃/卡死/后台线程/HTTP 服务代码用 `aalint --run-isolated`**（子进程隔离，崩溃不影响验证）；普通代码的兜底超时由 `--timeout` 提供（aiRunner 时代依赖 bash timeout 的做法可弃用）
 - 测试代码只用 `print(...)` 和 `return` 回传，**禁止 `console.log`**
-- GUI 脚本 / 可能死循环的脚本必须用 `timeout` 包裹执行
-- 编译/运行错误必须**基于错误信息（含行号）修复**，禁止盲改
+- 编译/运行错误必须**基于错误信息（含行号）修复**，禁止盲改；语法类错误可 `aalint --fix --dry-run <file>` 预览自动修复（确认 diff 后再去掉 --dry-run）
 - **GUI/图像验证优先读取程序内部状态**（`return 状态变量`、`getPixel` 像素断言）；视觉模型识别结果是辅助证据不是结论，据其反推代码 bug 前必须先用内部状态交叉验证（幻觉防护，详见 WORKFLOW 第四章）
 - 新踩的坑必须**立即**追加到 `PITFALLS.md`（唯一坑库，追加式，含错误原文/根因/❌✅对比，格式见该文件）——这是最高优先级规则之一，详见第十章
 
@@ -404,7 +405,7 @@ else {
 **阶段二（验证通过，就地升级）**：坑确认解决后，将草稿升级为正式条目（补根因、解法、❌/✅ 对比，去掉未验证标记）。
 
 **"坑已解决"的判定标准**（与验证循环同构，无需额外判断）：
-- 修复类坑：修复代码通过 `--check` + aiRunner 执行/测试验证，即为解决
+- 修复类坑：修复代码通过 `aalint`（或备用 aiRunner）编译检查 + 执行/测试验证，即为解决
 - 认知类坑（官方库行为如此）：实测复现一次 + 结论能写成 ❌/✅ 对比，即为解决
 - 验证不通过 = 坑未解决，条目保持"未验证"状态，禁止凭假设直接写成结论（教训：误诊条目会误导后续所有会话）
 
