@@ -383,6 +383,7 @@ else {
 - **写入或修改任何 `.aardio` 文件前，必须先 `aalint <file>` 编译检查**（等效 autos：编译通过才写入）
 - **写完逻辑代码必须执行验证**：`aalint --run --capture --timeout 10 <file>`，用 `print`/`return` 观察关键值，禁止"写完就交"；机器可读结果加 `--json`（以退出码为准）
 - **不确定 API 行为时**：`aalint --eval "表达式"` 快速验证，或 `aalint --api 库名` 查签名，或 `aalint --imports <file>` 验证依赖
+- **使用库 API 前对照 `CHANGELOG-KNOWLEDGE.md` 废弃迁移表**，禁止使用官方已废弃的旧写法（web.sciter/string.toUnicode/table.isArray 等）；不确定新旧时以该文件为准或查官方更新日志
 - **交付前跑陷阱检查**：`aalint --lint <file>`（12 条 aardio 专属规则），警告必须逐条确认或修复
 - **崩溃/卡死/后台线程/HTTP 服务代码用 `aalint --run-isolated`**（子进程隔离，崩溃不影响验证）；普通代码的兜底超时由 `--timeout` 提供（aiRunner 时代依赖 bash timeout 的做法可弃用）
 - 测试代码只用 `print(...)` 和 `return` 回传，**禁止 `console.log`**

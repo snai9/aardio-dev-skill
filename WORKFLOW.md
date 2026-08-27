@@ -208,9 +208,10 @@ aardio 官方助手更新很快（autos.aardio、lib/autos/ 都会随 IDE 更新
 ### 6.2 同步步骤（建议每次 aardio IDE 大版本更新后做一次）
 
 1. **diff 系统提示词**：提取 autos.aardio 中 `systemPrompt` 块与 `AUTOS-PROMPT.md` 对比；措辞变化通常比新增更重要（官方在持续调教措辞）
-2. **diff 工具列表**：对比 schemas.aardio 中出现的新工具名与 SKILL.md 第二十章表格；新工具→在 WORKFLOW.md 第三章映射表补一行"第三方等效动作"
-3. **陷阱回写**：日常开发中验证工具报错踩到的新坑，立即追加到 PITFALLS.md（这就是活的长期记忆，强制）
-4. **验证工具链兼容性**：aardio 大版本更新后重编译 aalint（F7）并跑一遍核心场景（编译检查/执行捕获/lint/api/fix）确认正常
+2. **同步官方更新日志**（新增，高价值）：抓取 https://ide.update.aardio.com/log/ 中自上次同步以来的条目，按三类过滤（新增库/函数、废弃与迁移、行为变更）追加/更新 `CHANGELOG-KNOWLEDGE.md`；噪音条目（改进范例/文档/AI 助手）忽略。**废弃迁移表是写码前必查项**——防止生成官方已废弃的"考古代码"（web.sciter→web.view、string.toUnicode→string.toUtf16、table.isArray→table.isArrayLike 等）
+3. **diff 工具列表**：对比 schemas.aardio 中出现的新工具名与 SKILL.md 第二十章表格；新工具→在 WORKFLOW.md 第三章映射表补一行"第三方等效动作"
+4. **陷阱回写**：日常开发中验证工具报错踩到的新坑，立即追加到 PITFALLS.md（这就是活的长期记忆，强制）
+5. **验证工具链兼容性**：aardio 大版本更新后重编译 aalint（F7）并跑一遍核心场景（编译检查/执行捕获/lint/api/fix）确认正常
 
 ### 6.3 原则
 

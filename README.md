@@ -14,6 +14,7 @@ aardio 开发知识库 + 规则 + 工具链，供第三方 IDE（ZCode / Claude 
 | `WORKFLOW.md` | 工作流总纲：官方助手剖析结论、autos 工具→第三方 IDE 等效动作映射表、强制验证循环、官方更新同步机制 | AI 首先读 |
 | `RULES.md` | 行为约束：用户偏好、代码规则、aalint 验证强制规则、踩坑记录强制规则、禁止事项 | AI 其次读 |
 | `PITFALLS.md` | **踩坑记录库（只增不删）**：每次踩坑/修错/验证 API 后立即追加；遇到问题先查这里。仓库越用越准的核心机制 | AI 随时读写 |
+| `CHANGELOG-KNOWLEDGE.md` | **官方更新日志提炼库**：只记新增库/函数、废弃迁移、行为变更三类；废弃迁移表写码前必查（防考古代码） | AI 写库调用前查 |
 | `SKILL.md` | 领域知识：语法、标准库、场景路由表、60+ 条实战陷阱、颜色格式规范 | AI 按需查 |
 | `AUTOS-PROMPT.md` | 官方 autos 系统提示词**原文**备份（行为准则 + 同步 diff 基准） | AI 视为已生效 |
 | `AGENTS-template.md` | 项目级 AI 指令模板：复制到项目根目录改名 `AGENTS.md`，自动注入全部约束 | 人复制一次 |
@@ -120,7 +121,7 @@ aardio 官方 AI 助手更新频繁，不需要逐版追赶。每次 aardio IDE 
 对比本机 $AARDIO 下 autos 源码，更新本仓库。
 ```
 
-AI 会自动：diff 官方系统提示词（对照 AUTOS-PROMPT.md）→ diff 工具列表（schemas.aardio）→ 补映射表 → 重编译 aalint 并跑核心场景回归。原则：只同步"影响代码生成质量"的部分，官方文档不分发。
+AI 会自动：diff 官方系统提示词（对照 AUTOS-PROMPT.md）→ 同步官方更新日志到 CHANGELOG-KNOWLEDGE.md（新增/废弃/行为变更三类）→ diff 工具列表（schemas.aardio）→ 补映射表 → 重编译 aalint 并跑核心场景回归。原则：只同步"影响代码生成质量"的部分，官方文档不分发。
 
 ---
 
