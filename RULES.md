@@ -374,7 +374,7 @@ else {
 
 ### 9.1 aalint 验证工具（主）与 aiRunner（备）
 
-- **主工具 aalint**：`$AARDIO\aalint.exe`（与 aardio.exe 同目录，能找到全部标准库）。源码在 `$AARDIO\project\aalint\`，随 aardio 更新而更新；用法速查：`aalint --ai-guide`
+- **主工具 aalint**：`$AARDIO\aalint.exe`（与 aardio.exe 同目录，能找到全部标准库）。源码收录在本仓库 `tools/aalint/`（安装/更新/重编译流程见 WORKFLOW 二、八）；用法速查：`aalint --ai-guide`
 - **备用工具 aiRunner**：仓库 `tools/aiRunner.exe`。仅当 aalint 缺失/损坏时临时使用（用法见 WORKFLOW 2.4）
 - **发现新陷阱必须回写**：SKILL.md 的陷阱章节就是长期记忆，踩新坑立即回写
 

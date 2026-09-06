@@ -27,12 +27,12 @@
 ## 二、关键缺口：代码无法执行 → 用 aalint 补上
 
 第三方 IDE 的 AI 默认只能"写"aardio 代码不能"跑"，这是效果差距的最大来源。
-本仓库现以 **aalint**（`$AARDIO\aalint.exe`，源码 `$AARDIO\project\aalint\`）为主验证工具——它是功能全面的 aardio 语法检查与运行工具，严格覆盖并超出 aiRunner 的全部能力（含 aifix 自动修复、陷阱 lint、API 查询、崩溃隔离、GUI 冒烟）；`tools/aiRunner/` 降级为备用（aalint 缺失时临时用）。
+本仓库现以 **aalint**（`$AARDIO\aalint.exe`，源码收录在本仓库 `tools/aalint/`）为主验证工具——它是功能全面的 aardio 语法检查与运行工具，严格覆盖并超出 aiRunner 的全部能力（含 aifix 自动修复、陷阱 lint、API 查询、崩溃隔离、GUI 冒烟）；`tools/aiRunner/` 降级为备用（aalint 缺失时临时用）。
 
 ### 2.1 一次性安装（用户手动做，只做一次）
 
-1. 用 aardio IDE 打开 `$AARDIO\project\aalint\default.aproj`，按 **F7** 发布
-2. 把 `dist\aalint.exe` 和 `aalint-ai-guide.md` 复制到 `$AARDIO\`（**与 aardio.exe 同目录**——这样 aalint 能经 `~/lib/` 找到全部标准库，无需 junction）
+1. 用 aardio IDE 打开本仓库 `tools/aalint/default.aproj`，按 **F7** 发布
+2. 把 `tools/aalint/dist/aalint.exe` 和 `tools/aalint/aalint-ai-guide.md` 复制到 `$AARDIO\`（**与 aardio.exe 同目录**——这样 aalint 能经 `~/lib/` 找到全部标准库，无需 junction）
 3. 验证：`"$AARDIO/aalint.exe" --version` 应显示 v2.4.x
 4. （备用工具 aiRunner 如需启用：编译 `tools/aiRunner/default.aproj` → F7 → 复制到 `tools/aiRunner.exe`，再建 junction 见 2.4）
 
@@ -226,21 +226,22 @@ aardio 官方助手更新很快（autos.aardio、lib/autos/ 都会随 IDE 更新
 | 层 | 文件 | 记什么 | 谁更新 |
 |---|---|---|---|
 | 实战坑库 | 本仓库 `PITFALLS.md` | **用户项目中真实踩的坑**（错误原文、根因、❌/✅、场景），AI 写码前必查 | AI 会话（两阶段强制规则，见 RULES 十） |
-| 通用教科书 | aalint 自带 `$AARDIO\project\aalint\docs\aardio-syntax-traps.md` | **语言级通用语法陷阱**（约 40 主题，提炼自官方文档），是 aalint `--lint` 规则的候选清单 | **只读不写**——它随 aalint 源码分发，不属于本仓库 |
+| 通用教科书 | aalint 自带 `tools/aalint/docs/aardio-syntax-traps.md` | **语言级通用语法陷阱**（约 40 主题，提炼自官方文档），是 aalint `--lint` 规则的候选清单 | **只读不写**——它是 aalint 项目的出厂文档，虽随源码收录在本仓库，也不纳入本仓库文档体系 |
 | 机器执行 | `aalint --lint`（12 条规则） | 能静态检测的陷阱直接工具抓，不依赖记录 | 随 aalint 版本更新 |
 | 沉淀层 | 本仓库 `SKILL.md` 陷阱章节 | 稳定复用的语言/库知识体系 | AI 会话（可选，从 PITFALLS 归纳） |
 
-**铁律**：踩坑记录**只进 PITFALLS.md**，禁止写进 aalint 的 traps 文档（那是别人项目的出厂说明书）；发现 lint 漏报某类陷阱，记 PITFALLS.md 即可，不改 aalint 源码。
+**铁律**：踩坑记录**只进 PITFALLS.md**，禁止写进 aalint 的 traps 文档（那是 aalint 项目的出厂说明书）；发现 lint 漏报某类陷阱，记 PITFALLS.md 即可，不改 aalint 源码。
 
 ---
 
-## 八、aalint 更新与升级（纯外部依赖，不影响仓库逻辑）
+## 八、aalint 更新与升级（独立项目，源码收录于 tools/aalint/）
 
-aalint 是独立项目（`$AARDIO\project\aalint\`），作者更新后：
+aalint 与 aiRunner 一样是独立项目，源码特意收录在本仓库 `tools/aalint/`（在其他环境开发时以最新开发副本为准，更新后同步回来）。作者更新后：
 
-1. 用 IDE 打开 `default.aproj` 按 **F7** 重编译
-2. 把 `dist\aalint.exe`（及新版 `aalint-ai-guide.md`）拷贝到 `$AARDIO\`——**完事，本仓库任何文件都不用改**
-3. 建议顺手跑一遍核心场景回归（编译检查/`--run --capture`/`--lint`/`--eval`）确认新版本正常
-4. 唯一需要动仓库的情况：新版本**改了命令行接口**（参数改名/删除）→ 让 AI 对照 `aalint --ai-guide` diff WORKFLOW 2.2 速查表；`--lint` **新增规则** → 无需动仓库（AI 自动受益），可在 PITFALLS.md 记一条"aalint x.x 新增 xx 规则"
+1. 用 IDE 打开 `tools/aalint/default.aproj` 按 **F7** 重编译
+2. 把 `tools/aalint/dist/aalint.exe`（及新版 `aalint-ai-guide.md`）拷贝到 `$AARDIO\`（与 aardio.exe 同目录）
+3. **把更新后的源码与文档同步提交进 `tools/aalint/`**（`.build/`、`dist/`、`lib/` 已在 .gitignore 忽略，不会误提交）
+4. 建议顺手跑一遍核心场景回归（编译检查/`--run --capture`/`--lint`/`--eval`）确认新版本正常
+5. 唯一还需要动仓库其他文件的情况：新版本**改了命令行接口**（参数改名/删除）→ 让 AI 对照 `aalint --ai-guide` diff WORKFLOW 2.2 速查表；`--lint` **新增规则** → 无需额外动作（AI 自动受益），可在 PITFALLS.md 记一条"aalint x.x 新增 xx 规则"
 
 aiRunner（仓库内置备用执行器）同理：它是本仓库自己的代码，仓库更新它随仓库走，与 aalint 互不影响。

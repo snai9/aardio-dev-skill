@@ -18,7 +18,7 @@ aardio 开发知识库 + 规则 + 工具链，供第三方 IDE（ZCode / Claude 
 | `SKILL.md` | 领域知识：语法、标准库、场景路由表、60+ 条实战陷阱、颜色格式规范 | AI 按需查 |
 | `AUTOS-PROMPT.md` | 官方 autos 系统提示词**原文**备份（行为准则 + 同步 diff 基准） | AI 视为已生效 |
 | `AGENTS-template.md` | 项目级 AI 指令模板：复制到项目根目录改名 `AGENTS.md`，自动注入全部约束 | 人复制一次 |
-| aalint（在 $AARDIO） | **主验证工具**：语法检查/执行捕获/lint/API 查询/aifix/崩溃隔离/GUI 冒烟；源码在 $AARDIO\project\aalint | AI 调用 |
+| `tools/aalint/` | **主验证工具 aalint**（exe 安装到 $AARDIO）：语法检查/执行捕获/lint/API 查询/aifix/崩溃隔离/GUI 冒烟；源码收录在 tools/aalint | AI 调用 |
 | `tools/aiRunner/` | 备用执行器（aalint 的轻量子集），aalint 缺失时启用，见 WORKFLOW 2.4 | 备用 |
 
 **加载顺序**：`WORKFLOW.md` → `RULES.md` → `SKILL.md`（`AUTOS-PROMPT.md` 可选）。规则优先级高于知识。
@@ -44,8 +44,8 @@ aardio 开发知识库 + 规则 + 工具链，供第三方 IDE（ZCode / Claude 
 
 ### 2.2 安装 aalint（一次性，主验证工具）
 
-1. 用 aardio IDE 打开 `$AARDIO\project\aalint\default.aproj`，按 **F7** 发布
-2. 把 `project\aalint\dist\aalint.exe` 和 `project\aalint\aalint-ai-guide.md` 复制到 `$AARDIO\`（**与 aardio.exe 同目录**，这样能找到全部标准库）
+1. 用 aardio IDE 打开本仓库 `tools/aalint/default.aproj`，按 **F7** 发布
+2. 把 `tools/aalint/dist/aalint.exe` 和 `tools/aalint/aalint-ai-guide.md` 复制到 `$AARDIO\`（**与 aardio.exe 同目录**，这样能找到全部标准库）
 
 验证（Git Bash）：
 
