@@ -1,0 +1,2878 @@
+_VERSION = "2.4.0";
+var exitCode = 0;
+
+// ─── 全局错误钩子：阻止弹窗 ───
+..onError = function(err){
+    io.stderr.write(tostring(err), '\r\n');
+    io.stderr.flush();
+    return true;
+};
+
+// ─── lint 需要的额外库 ───
+import fsys;
+import win;
+import process;
+
+// ─── 控制台编码处理 ───
+var _consoleCP = ::Kernel32.GetConsoleOutputCP();
+
+// ─── 启用 ANSI 虚拟终端处理 ───
+var _hConOut = ::Kernel32.GetStdHandle(-11/*STD_OUTPUT_HANDLE*/);
+var _conMode = { INT value };
+if(::Kernel32.GetConsoleMode(_hConOut, _conMode)){
+    _conMode.value = _conMode.value | 0x4/*ENABLE_VIRTUAL_TERMINAL_PROCESSING*/;
+    ::Kernel32.SetConsoleMode(_hConOut, _conMode.value);
+}
+
+// ─── ANSI 颜色 ───
+_C = {
+    RST = '\x1b[0m';
+    RED = '\x1b[91m';
+    GRN = '\x1b[92m';
+    YLW = '\x1b[93m';
+    CYN = '\x1b[96m';
+    MAG = '\x1b[95m';
+    DIM = '\x1b[2m';
+};
+
+var writeOut = function(...){
+    var args = {...};
+    for(i=1; #args; 1){
+        var s = tostring(args[i]);
+        if(_consoleCP && _consoleCP != 65001) s = string.fromto(s, 65001, _consoleCP);
+        io.stdout.write(s);
+    }
+    io.stdout.write('\r\n');
+    io.stdout.flush();
+};
+
+var writeErr = function(...){
+    var args = {...};
+    for(i=1; #args; 1){
+        var s = tostring(args[i]);
+        if(_consoleCP && _consoleCP != 65001) s = string.fromto(s, 65001, _consoleCP);
+        io.stderr.write(s);
+    }
+    io.stderr.write('\r\n');
+    io.stderr.flush();
+};
+
+// ─── JSON 模式下静默信息日志 ───
+var _useJson = false;
+var _logInfo = function(...){ if(!_useJson) writeOut(...); };
+var _logErr  = function(...){ writeErr(...); };
+
+var printVersion = function(){
+    writeOut(_C.CYN ++ "aalint v" ++ _VERSION ++ " - aardio 语法检查与运行工具" ++ _C.RST);
+};
+
+var printHelp = function(){
+    printVersion();
+    writeOut("");
+    writeOut("用法:");
+    writeOut("  aalint <file>                        检查 .aardio 文件语法");
+    writeOut("  aalint <file1> <file2> ...           检查多个文件");
+    writeOut("  aalint --dir <directory>             递归检查目录下所有 .aardio 文件");
+    writeOut("  aalint --run <file>                  运行并检查（语法+运行时，5秒超时）");
+    writeOut("  aalint --run-isolated <file>         子进程隔离运行(崩溃不影响aalint,实时回传输出)");
+    writeOut("  aalint --run <f1> <f2> ...           运行多个文件（逐一执行）");
+    writeOut("  aalint --run --timeout 3 <file>      自定义超时秒数(0=禁用超时)");
+    writeOut("  aalint --run --ui-smoke <file>       运行后自动点击窗口按钮/控件触发事件");
+    writeOut("  aalint --run --ui-flow <json> <file> 按 JSON 流程脚本执行界面测试");
+    writeOut("  aalint --dir --run <directory>       递归运行目录下所有 .aardio 文件");
+    writeOut("  aalint --fix <file>                  自动修复常见 API 错误");
+    writeOut("  aalint --fix --dry-run <file>        预览修复效果（不实际修改文件）");
+    writeOut("  aalint --dir --fix <directory>       递归修复目录下所有 .aardio 文件");
+    writeOut("  aalint --lint <file>                 aardio 陷阱规则检测");
+    writeOut("  aalint --dir --lint <directory>      递归 lint 目录");
+    writeOut("  aalint --symbols <file>              提取符号大纲（import/函数/变量）");
+    writeOut("  aalint --imports <file>              依赖验证（检查 import 可解析性）");
+    writeOut("  aalint --api <lib.name>              查询标准库 API 签名");
+    writeOut("  aalint --ide-compile                 控制已打开的 aardio IDE 编译当前视图源码");
+    writeOut("  aalint --ide-run                     控制已打开的 aardio IDE 运行当前工程");
+    writeOut("  aalint --ide-publish                 控制已打开的 aardio IDE 发布当前工程");
+    writeOut("  aalint --ide-publish-refresh         重新从磁盘载入主源码后发布当前工程");
+    writeOut("  aalint --ide-goto <file:line>        在已打开的 aardio IDE 中打开文件并跳转到行");
+    writeOut("  aalint --run --capture <file>        运行并捕获 stdout 输出");
+    writeOut("  aalint --run --capture-out <file> <f> 运行并捕获输出到指定文件(不自动删除)");
+    writeOut("  aalint --run --setup mock.aardio <f>  同作用域注入 mock 代码(伪造前置状态/直接调回调)");
+    writeOut("  aalint --run --snapshot-in snap.json <f> 恢复快照控件状态后运行(可手工编辑伪造可靠/异常状态)");
+    writeOut("  aalint --run --snapshot-out snap.json <f> 运行后按 --snapshot-delay 导出控件状态快照");
+    writeOut("  aalint --run --snapshot-gen snap.json <f> 生成可编辑快照模板(含全部控件当前值)");
+    writeOut("  aalint --run --snapshot-delay 3000 <f> 快照导出延迟毫秒数(默认3000)");
+    writeOut("  aalint --eval <expr>                 内联表达式求值");
+    writeOut("  aalint --ai-guide                    输出 AI 使用 aalint 的推荐验证流程");
+    writeOut("  aalint --lib <path> --run <file>     添加自定义库目录（附加模式）");
+    writeOut("  aalint --lib-only <path> --run <file> 仅使用指定库目录");
+    writeOut("  aalint --ignore <pattern>            排除匹配模式的文件（可多次指定）");
+    writeOut("  aalint --json                        以 JSON 格式输出结果（CI/CD 适用）");
+    writeOut("  aalint --help, -h                    显示此帮助");
+    writeOut("  aalint --version, -v                 显示版本");
+    writeOut("");
+    writeOut("AI 提示:");
+    writeOut("  最佳安装方式: 将 aalint.exe 放在 aardio.exe 同一目录。");
+    writeOut("  AI 编码代理请先阅读与 aalint.exe 同目录的 aalint-ai-guide.md");
+    writeOut("  或运行 aalint --ai-guide 查看最短验证流程。");
+    writeOut("");
+    writeOut("退出码:");
+    writeOut("  0 - 全部通过");
+    writeOut("  1 - 语法错误或运行时错误");
+    writeOut("  2 - 参数错误或文件不存在");
+};
+
+var printAiGuide = function(){
+    writeOut("aalint AI guide");
+    writeOut("");
+    writeOut("目标:");
+    writeOut("  让 AI 在修改 aardio 代码后用可执行反馈闭环验证，而不是只靠静态猜测。");
+    writeOut("");
+    writeOut("常用命令:");
+    writeOut("  aalint <file>                              语法检查");
+    writeOut("  aalint --lint <file>                       检查 aardio 常见陷阱");
+    writeOut("  aalint --symbols <file>                    快速理解 import/函数/变量");
+    writeOut("  aalint --imports <file>                    验证 import 是否可解析");
+    writeOut("  aalint --api <lib.name>                    查询标准库 API 签名");
+    writeOut(`  aalint --eval "expr"                      快速验证语法或小 API 行为`);
+    writeOut("  aalint --run --timeout 5 <file>            执行短生命周期代码");
+    writeOut("  aalint --run --capture --timeout 5 <file>  执行并捕获 stdout");
+    writeOut("  aalint --run --ui-smoke --timeout 6 <file> 触发窗口控件事件");
+    writeOut("  aalint --run --ui-flow flow.json <file>    执行显式 UI 流程");
+    writeOut("  aalint --run --setup mock.aardio <file>    注入 mock 代码伪造前置状态后触发目标按钮");
+    writeOut("  aalint --run --snapshot-in snap.json <f>   恢复快照控件状态(可编辑 JSON 伪造可靠/异常状态)");
+    writeOut("  aalint --run --snapshot-out snap.json <f>  运行后导出控件状态快照");
+    writeOut("  aalint --run --snapshot-gen snap.json <f>  生成可编辑快照模板");
+    writeOut("  aalint --run-isolated --timeout 8 <file>   隔离执行服务/线程/可能卡住的代码");
+    writeOut("");
+    writeOut("推荐流程:");
+    writeOut("  1. 先用 --symbols 或局部阅读理解入口和依赖。");
+    writeOut("  2. 不确定库、函数、参数时先跑 --api 或 --eval，必要时阅读 ~/lib 源码。");
+    writeOut("  3. 修改后至少运行 aalint <file>。");
+    writeOut("  4. 修改可执行逻辑后运行 --run；需要断言时写短测试文件。");
+    writeOut("  5. 修改窗口回调后运行 --ui-smoke；真实业务界面优先写 --ui-flow。");
+    writeOut("  6. 涉及后台线程、HTTP 服务、跨语言桥接或可能阻塞的代码时用 --run-isolated。");
+    writeOut("  7. 需要稳定解析结果时加 --json，并以退出码作为最终状态。");
+    writeOut("");
+    writeOut("判定:");
+    writeOut("  exit 0: 通过。");
+    writeOut("  exit 1: 语法、运行时、测试或依赖失败，读取诊断后修复并重跑同一命令。");
+    writeOut("  exit 2: 参数、路径或命令用法错误，先修正命令。");
+    writeOut("");
+    writeOut("边界:");
+    writeOut("  --run 会真实执行代码；避免在测试入口中放网络、删除、付款、发布等危险副作用。");
+    writeOut("  --ui-smoke 是烟测，不理解业务流程；复杂交互请使用 --ui-flow 或专门测试入口。");
+    writeOut("  --ui-flow 需要校验控件输出时使用 assertText/expectText，并用 contains 或 text/equals/value 断言。");
+};
+
+// ─── JSON 结果收集 ───
+var _jsonResults = {};
+var addResult = function(file, pass, stage, err, modified, diffs, warnings, symbols, imports, apiInfo, output){
+    var r = {
+        file = file;
+        pass = pass;
+        stage = stage;
+        error = err;
+        modified = modified;
+    };
+    if(diffs && #diffs > 0) r.diffs = diffs;
+    if(warnings && #warnings > 0) r.warnings = warnings;
+    if(symbols) r.symbols = symbols;
+    if(imports) r.imports = imports;
+    if(apiInfo) r.api = apiInfo;
+    if(output) r.output = output;
+    table.push(_jsonResults, r);
+};
+
+// ───── 错误调试格式化器：替代 IDE 弹窗的可捕获/可输出/可验证调试输出 ─────
+// 参考 lib/ide/debug.aardio 的中文转换表与智能提示，并新增源码上下文显示。
+var errFieldCn = {
+    ["Near"] = '\n靠近:';
+    ["Byte"] = '\n字节码:';
+    ["Error"] = '\n错误:';
+    ["File"] = '\n文件:';
+    ["Line"] = '\n错误行号:';
+    ["Field"] = '\n字段:';
+    ["Failed"] = '\n失败操作:';
+    ["Attempt to"] = '\n不支持此操作:';
+    ["Kind"] = '\n定义类型:';
+    ["Name"] = '\n名字:';
+    ["Type"] = '\n类型:';
+    ["Expected"] = '\n预期:';
+    ["Got"] = '\n实际获取:';
+    ["Struct error"] = '\n结构体错误:';
+    ["Match for"] = '\n匹配于:';
+    ["Match line"] = '\n匹配行:';
+    ["Expected size"] = '\n预期大小:';
+    ["Bad argument"] = '\n错误参数:';
+    ["Calling"] = '\n调用函数名:';
+    ["Declare api"] = '\nAPI函数声明:';
+    ["Data type error"] = '\n参数类型错误:';
+};
+
+// 解析 aardio 错误消息的结构化字段（{Line}/{File}/{Kind}/{Name}/{Type} 等）
+var parseErrFields = function(err){
+    var fields = {};
+    for k,v in string.gmatch('\n'+err, "\n\{?([\a\s]*?)\}?\:(\N+)") {
+        if(k && v) fields[string.trim(k)] = string.trim(v);
+    }
+    return fields;
+};
+
+// 从错误消息提取 文件 + 行号（File 形如 "(loadcode):" 或 "C:\xx.aardio:"）
+var extractFileLine = function(err){
+    var fields = parseErrFields(err);
+    var file = fields["File"];
+    var line = fields["Line"];
+    var lineNo = line ? tonumber(string.match(line,"\d+")) : null;
+    if(file) file = string.trim(file, ':\s');
+    if(file && file == "(loadcode)") file = null;
+    return {file=file; line=lineNo; fields=fields};
+};
+
+// 显示出错行前后源码上下文（IDE 弹窗给不了的关键调试信息）
+var showSourceContext = function(file, lineNo, radius){
+    if(!file || !lineNo || !io.exist(file)) return null;
+    radius = radius : 2;
+    var lines = string.splitEx(string.load(file));
+    if(lineNo < 1 || lineNo > #lines) return null;
+    var out = {};
+    for(i = math.max(1,lineNo-radius); i <= math.min(#lines,lineNo+radius); 1){
+        var marker = (i==lineNo) ? ">>> " : "    ";
+        table.push(out, string.format("%s%4d: %s", marker, i, string.trim(lines[i],' \t')));
+    }
+    return string.join(out, '\n');
+};
+
+// 中文格式化 + 智能提示（借鉴 ide/debug.aardio）
+var formatAardioError = function(err){
+    if(type(err) != "string" || #err == 0) return tostring(err);
+    var s = err;
+    var fields = parseErrFields(s);
+    s = string.replace(s, "@\n\{Error\}:\n", '\n');
+    s = string.replace(s, "\n----------------------\s*\n\s*", '\n');
+    s = string.replace('\n'+s, "\n\{?([\a\s]*?)\}?\:", errFieldCn);
+    s = string.trim(s);
+    if(fields["Attempt to"] == "_get table" || fields["Attempt to"] == "_set table"){
+        var name = fields["Name"] ? string.trim(fields["Name"],"'") : null;
+        if(name == "mainForm"){
+            s = s + '\n---------------------------------------------------\n提示: 主窗体( mainForm )是否已运行? 非全局命名空间是否需用 ..mainForm?';
+        }
+        elseif(name == "this" && fields["Type"] == "null"){
+            s = s + '\n---------------------------------------------------\n提示: 仅在 class 主体内才能用 this, 类外成员函数请改用 owner。';
+        }
+        elseif(name && io.libpath(name)){
+            if(name=="json") name = "JSON";
+            s = s + '\n---------------------------------------------------\n提示: 请先用代码 import '+name+'; 导入 '+name+' 库。';
+        }
+    }
+    return s;
+};
+
+// 完整调试输出：中文错误 + 源码上下文
+var formatDebugOutput = function(err, sourcePath){
+    var parts = {};
+    table.push(parts, formatAardioError(err));
+    var fl = extractFileLine(err);
+    // 错误消息中的 File 可能是缩略路径（"...\\xx.aardio:"），无法直接读文件；
+    // 优先用调用方传入的真实 sourcePath。
+    var file = sourcePath;
+    if(!file && fl.file && !string.startsWith(fl.file, "...") && io.exist(fl.file)){
+        file = fl.file;
+    }
+    var src = showSourceContext(file, fl.line);
+    if(src){
+        table.push(parts, "");
+        table.push(parts, "  ---- 源码上下文 (第 " ++ math.max(1,fl.line-2) ++ "-" ++ math.min(fl.line+2,9999) ++ " 行) ----");
+        table.push(parts, src);
+    }
+    return string.join(parts, '\n');
+};
+
+var splitLines = function(code){
+    if(!code) return {};
+    return string.splitEx(code);
+};
+
+// ─── ignore 模式匹配 ───
+var isIgnored = function(filePath, patterns){
+    if(!patterns || #patterns == 0) return false;
+    for(i=1; #patterns; 1){
+        if(string.match(filePath, patterns[i])) return true;
+    }
+    return false;
+};
+
+// ═══════════════════════════════════════════════════
+// ─── LINT：aardio 专属陷阱规则检测 ────────────────
+// ═══════════════════════════════════════════════════
+
+var _stripLintLiterals = function(line){
+    var dq = string.char(0x22);
+    var sq = string.char(0x27);
+    var bt = string.char(0x60);
+    var bs = string.char(0x5C);
+    var slash = string.char(0x2F);
+    var out = "";
+    var quote = null;
+    var i = 1;
+    var lineLen = #line;
+
+    while(i <= lineLen){
+        var ch = string.slice(line, i, i);
+        var nextCh = "";
+        if(i < lineLen) nextCh = string.slice(line, i + 1, i + 1);
+
+        if(quote){
+            out ++= " ";
+            if(quote == sq and ch == bs and i < lineLen){
+                out ++= " ";
+                i += 2;
+                continue;
+            }
+            if(quote == dq and ch == dq){
+                if(nextCh == dq){
+                    out ++= " ";
+                    i += 2;
+                    continue;
+                }
+                quote = null;
+            } elseif(quote == sq and ch == sq){
+                quote = null;
+            } elseif(quote == bt and ch == bt){
+                quote = null;
+            }
+            i += 1;
+            continue;
+        }
+
+        if(ch == slash and nextCh == slash) break;
+        if(ch == dq or ch == sq or ch == bt){
+            quote = ch;
+            out ++= " ";
+            i += 1;
+            continue;
+        }
+
+        out ++= ch;
+        i += 1;
+    }
+
+    return out;
+};
+
+// 规则定义：每条规则 {id, desc, check(lineText, lineNo, allLines)} => warning string or null
+var _lintRules = {
+    // 规则1: str-plus — 用 + 拼接字符串（应使用 ++）
+    {
+        id = "str-plus";
+        desc = "可能用 + 拼接字符串，aardio 中应使用 ++";
+        check = function(line, lineNo, allLines){
+            var codeLine = _stripLintLiterals(line);
+            if(string.match(codeLine, `^\s*//`)) return null;
+            if(!string.indexOf(codeLine, "+")) return null;
+            if(string.match(line, `"[^"]*"\s*\+\s*"`)) return "可能用 + 拼接字符串，aardio 中应使用 ++";
+            if(string.match(line, `"[^"]*"\s*\+\s*'`)) return "可能用 + 拼接字符串，aardio 中应使用 ++";
+            if(string.match(line, `'[^']*'\s*\+\s*"`)) return "可能用 + 拼接字符串，aardio 中应使用 ++";
+            if(string.match(line, `\w+\s*\+\s*"`) and !string.match(line, `\d+\s*\+\s*"`)) return "可能用 + 拼接字符串，aardio 中应使用 ++";
+            if(string.match(line, `"\w*[^"]*"\s*\+\s*\w+`) and !string.match(line, `"\s*\+\s*\d+`)) return "可能用 + 拼接字符串，aardio 中应使用 ++";
+            return null;
+        }
+    };
+    // 规则2: try-return — return 在 try 块内不会退出函数
+    {
+        id = "try-return";
+        desc = "return 位于 try 块内，不会退出函数";
+        check = function(line, lineNo, allLines){
+            var codeLine = _stripLintLiterals(line);
+            var trimmedLine = string.trim(codeLine);
+            if(string.startWith(trimmedLine, "//")) return null;
+            if(!string.startWith(trimmedLine, "return")
+                and !string.indexOf(trimmedLine, " return")
+                and !string.indexOf(trimmedLine, "{return")) return null;
+
+            for(k = lineNo - 1; k >= 1; k--){
+                var prev = string.trim(_stripLintLiterals(allLines[k] : ""));
+                if(!#prev || string.startWith(prev, "//")) continue;
+                if(string.startWith(prev, "catch")) return null;
+                if(string.startWith(prev, "try")){
+                    return "return 位于 try 块内，不会退出函数（aardio try-catch 语义）";
+                }
+                if(string.startWith(prev, "function")
+                    or string.indexOf(prev, "= function")
+                    or string.indexOf(prev, "=function")
+                    or string.match(prev, `^ctor\s*\(`)){
+                    break;
+                }
+            }
+            return null;
+        }
+    };
+    // 规则3: dquote-escape — \" 在双引号字符串中不转义
+    {
+        id = "dquote-escape";
+        desc = '" 在双引号字符串中不转义而是关闭字符串，改用单引号或反引号';
+        check = function(line, lineNo, allLines){
+            if(string.match(line, `^\s*//`)) return null;
+            var escQuotePos = string.indexOf(line, string.char(0x5C, 0x22));
+            if(escQuotePos){
+                var afterQuote = string.slice(line, escQuotePos + 2);
+                var nextChar = "";
+                if(afterQuote) nextChar = string.slice(afterQuote, 1, 1);
+                if(nextChar && !string.indexOf(' ,;)]}+`', nextChar)){
+                    return '" 在双引号字符串中不转义，而是关闭字符串，改用单引号或反引号';
+                }
+            }
+            return null;
+        }
+    };
+    // 规则4: ternary-fallback — ?: 真值分支为 false/null 或函数调用时可能落入 fallback
+    {
+        id = "ternary-fallback";
+        desc = "?: 的真值分支为 false/null 或可能返回 false/null，会落入 fallback 分支";
+        check = function(line, lineNo, allLines){
+            var codeLine = _stripLintLiterals(line);
+            if(string.match(codeLine, `^\s*//`)) return null;
+            var qStart = string.find(codeLine, "?");
+            if(!qStart) return null;
+            var afterQuestion = string.trim(string.slice(codeLine, qStart + 1));
+            var colonPos = string.indexOf(afterQuestion, ":");
+            if(!colonPos) return null;
+            var trueBranch = string.trim(string.slice(afterQuestion, 1, colonPos - 1));
+            var falseBranch = string.trim(string.slice(afterQuestion, colonPos + 1));
+            if(string.endWith(falseBranch, ";")){
+                falseBranch = string.trim(string.slice(falseBranch, 1, #falseBranch - 1));
+            }
+            if(trueBranch == "false" || trueBranch == "null" || trueBranch == "0"){
+                return "?: 真值分支为 false/null/0 时会继续使用 fallback，改用显式 if/else";
+            }
+            if(falseBranch != "null"
+                and !string.indexOf(trueBranch, "++")
+                and !string.indexOf(trueBranch, "+")
+                and string.match(trueBranch, `^[\w\.]+\s*\(`)
+                and string.endWith(trueBranch, ")")){
+                return "?: 真值分支是函数调用；若返回 false/null 会继续使用 fallback，确认语义或改用 if/else";
+            }
+            return null;
+        }
+    };
+    // 规则5: global-dot — namespace 块内漏 .. 前缀
+    {
+        id = "global-dot";
+        desc = "namespace 块内调用全局函数可能缺少 .. 前缀";
+        check = function(line, lineNo, allLines){
+            if(string.match(line, `^\s*//`)) return null;
+            var inNs = false;
+            for(k = lineNo - 1; k >= 1; k--){
+                var prev = allLines[k] : "";
+                if(string.match(prev, `^\s*namespace\s+`)) { inNs = true; break; }
+                if(string.match(prev, `^\w.*=\s*function`) or string.match(prev, `^\S.*=\s*function`)) break;
+            }
+            if(!inNs) return null;
+            var globals = {"table"; "string"; "math"; "io"; "fsys"; "time"; "JSON"; "console"; "raw"; "com"; "web"; "sys"; "win"; "gui"; "winui"; "util"};
+            for(g=1; #globals; 1){
+                var gn = globals[g];
+                if(string.match(line, gn ++ `\.`) and !string.match(line, `\.\.` ++ gn ++ `\.`)){
+                    return "namespace 块内调用 " ++ gn ++ " 可能缺少 .. 前缀";
+                }
+            }
+            return null;
+        }
+    };
+    // 规则6: unused-import — import 了但未使用
+    {
+        id = "unused-import";
+        desc = "导入了但未使用的库";
+        check = function(line, lineNo, allLines){
+            return null;
+        }
+    };
+    // 规则7: shadow-builtin — 变量名遮蔽内置名
+    {
+        id = "shadow-builtin";
+        desc = "变量名遮蔽内置名称";
+        check = function(line, lineNo, allLines){
+            if(string.match(line, `^\s*//`)) return null;
+            var builtins = {"string"; "table"; "math"; "io"; "assert"; "error"; "type"; "tonumber"; "tostring"; "print"; "null"; "true"; "false"};
+            for(b=1; #builtins; 1){
+                var bn = builtins[b];
+                var isVarDecl = string.match(line, `var\s+` ++ bn ++ `\s*=`);
+                var isAssign = string.match(line, `^` ++ bn ++ `\s*=`);
+                if(isVarDecl or isAssign){
+                    return "变量 " ++ bn ++ " 遮蔽内置名称";
+                }
+            }
+            return null;
+        }
+    };
+    // 规则8: foreign-idiom — 其他语言常见写法不是 aardio 语法/惯用法
+    {
+        id = "foreign-idiom";
+        desc = "检测到 JS/Lua/其他语言写法";
+        check = function(line, lineNo, allLines){
+            var codeLine = _stripLintLiterals(line);
+            var trimmed = string.trim(codeLine);
+            if(string.startWith(trimmed, "//")) return null;
+            if(string.indexOf(codeLine, "?.")){
+                return "aardio 不支持 JS optional chaining `?.`，请改用显式判断或 `[[]]`";
+            }
+            if(string.indexOf(codeLine, "=>")){
+                return "aardio 不支持 JS 箭头函数 `=>`，请使用 function 或 lambda";
+            }
+            if(string.findAny(codeLine, {"pairs\(";"pairs \("})){
+                return "aardio 不使用 Lua pairs，遍历表请用 for(k, v in tab)";
+            }
+            if(string.findAny(codeLine, {"ipairs\(";"ipairs \("})){
+                return "aardio 不使用 Lua ipairs，遍历数组请用 for(i, v in arr)";
+            }
+            if(string.findAny(codeLine, {"pcall\(";"pcall \("})){
+                return "aardio 不使用 Lua pcall，异常处理请用 try/catch 或 call";
+            }
+            if(string.startWith(trimmed, "finally") or string.indexOf(codeLine, "} finally")){
+                return "aardio try/catch 不使用 finally";
+            }
+            var tildePos = string.indexOf(codeLine, "~=");
+            if(tildePos){
+                var commentPos = string.indexOf(codeLine, "//");
+                if(!commentPos or tildePos < commentPos){
+                    return "aardio 不等号是 !=（不是 Lua 的 ~=）";
+                }
+            }
+            if(string.match(codeLine, `\w+\s*\:\s*\w+\s*\(`)){
+                return "aardio 方法调用不是 object:method()，请确认是否应使用 object.method()";
+            }
+            return null;
+        }
+    };
+    // 规则9: for-in-key — for in 单变量得到 key/index，不是 value
+    {
+        id = "for-in-key";
+        desc = "for in 单变量得到 key/index";
+        check = function(line, lineNo, allLines){
+            var codeLine = _stripLintLiterals(line);
+            var trimmed = string.trim(codeLine);
+            if(string.startWith(trimmed, "//")) return null;
+            if(!string.startWith(trimmed, "for")) return null;
+            if(!string.indexOf(trimmed, " in ")) return null;
+            if(string.indexOf(trimmed, ",")) return null;
+            if(string.match(trimmed, `^for\s*\(\s*\w+\s+in\s+`)
+                or string.match(trimmed, `^for\s+\w+\s+in\s+`)){
+                return "for in 只写一个变量时得到 key/index；若需要值请写 for(i, v in tab)";
+            }
+            return null;
+        }
+    };
+    // 规则10: thread-invoke-call — thread.invoke(fn()) 会传返回值
+    {
+        id = "thread-invoke-call";
+        desc = "thread.invoke 传入了函数调用结果";
+        check = function(line, lineNo, allLines){
+            var codeLine = _stripLintLiterals(line);
+            var trimmed = string.trim(codeLine);
+            if(string.startWith(trimmed, "//")) return null;
+            if(string.match(codeLine, `thread\.invoke\s*\(\s*function\s*\(`)) return null;
+            if(string.match(codeLine, `thread\.invoke\s*\(\s*[\w\.]+\s*\(`)){
+                return "thread.invoke(fn()) 会传入返回值；请写 thread.invoke(fn, arg1, arg2)";
+            }
+            return null;
+        }
+    };
+    // 规则11: io-file-chain — io.file(...).write(...).close() 链式调用错误
+    {
+        id = "io-file-chain";
+        desc = "io.file(...).write(...).close() 链式调用错误";
+        check = function(line, lineNo, allLines){
+            var codeLine = _stripLintLiterals(line);
+            var trimmed = string.trim(codeLine);
+            if(string.startWith(trimmed, "//")) return null;
+            if(string.indexOf(codeLine, "io.file")
+                and string.indexOf(codeLine, ".write(")
+                and string.indexOf(codeLine, ".close(")){
+                return "io.file(...).write(...) 返回值不是文件对象，不能继续 .close()；请保存文件对象或用 io.file.write";
+            }
+            return null;
+        }
+    };
+    // 规则12: assign-in-cond — if/while 条件中的单等号通常是误写
+    {
+        id = "assign-in-cond";
+        desc = "if/while 条件中出现单等号";
+        check = function(line, lineNo, allLines){
+            var codeLine = _stripLintLiterals(line);
+            var trimmed = string.trim(codeLine);
+            if(string.startWith(trimmed, "//")) return null;
+            if(!string.startWith(trimmed, "if(")
+                and !string.startWith(trimmed, "if (")
+                and !string.startWith(trimmed, "while(")
+                and !string.startWith(trimmed, "while (")){
+                return null;
+            }
+
+            var openPos = string.indexOf(trimmed, "(");
+            var closePos = string.indexOf(trimmed, ")");
+            if(!openPos or !closePos or closePos <= openPos) return null;
+
+            var cond = string.trim(string.slice(trimmed, openPos + 1, closePos - 1));
+            if(string.indexOf(cond, "==")
+                or string.indexOf(cond, "!=")
+                or string.indexOf(cond, "<=")
+                or string.indexOf(cond, ">=")){
+                return null;
+            }
+            if(string.match(cond, `^\w+\s*=\s*`)){
+                return "if/while 条件中出现单等号；请确认是否应使用 ==/=== 或拆成赋值语句";
+            }
+            return null;
+        }
+    };
+    // 规则13: table-isarray — table.isArray 仅检测纯数组（v39.0 起语义变更）
+    {
+        id = "table-isarray";
+        desc = "table.isArray 仅检测纯数组，判断普通表是否数组请用 table.isArrayLike";
+        check = function(line, lineNo, allLines){
+            var codeLine = _stripLintLiterals(line);
+            var trimmed = string.trim(codeLine);
+            if(string.startWith(trimmed, "//")) return null;
+            if(string.indexOf(codeLine, "table.isArray(")){
+                return "table.isArray 仅检测纯数组([])；判断普通表/类数组是否数组请用 table.isArrayLike";
+            }
+            return null;
+        }
+    };
+};
+
+// lintFile: 对单个文件执行 lint 规则
+var lintFile = function(filePath, ignorePatterns){
+    var fullPath = io.fullpath(filePath);
+    if(!io.exist(fullPath)){
+        _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ "文件不存在: " ++ fullPath);
+        addResult(fullPath, false, "lint", "文件不存在");
+        return false;
+    }
+    if(isIgnored(fullPath, ignorePatterns)){
+        _logInfo(_C.DIM ++ "  SKIP  " ++ _C.RST ++ fullPath ++ " (被 --ignore 排除)");
+        addResult(fullPath, true, "lint", null, false);
+        return true;
+    }
+
+    var code = string.load(fullPath);
+    var lines = splitLines(code);
+
+    var warnings = {};
+
+    // 逐行逐规则检查
+    var inBlockText = false;
+    for(i=1; #lines; 1){
+        var line = lines[i];
+        if(inBlockText){
+            if(string.indexOf(line, "*/")) inBlockText = false;
+            continue;
+        }
+        if(string.indexOf(line, "/*")){
+            if(!string.indexOf(line, "*/")) inBlockText = true;
+            continue;
+        }
+        for(r=1; #_lintRules; 1){
+            var rule = _lintRules[r];
+            if(rule.id == "unused-import") continue;
+            var warn = rule.check(line, i, lines);
+            if(warn){
+                table.push(warnings, {line=i; id=rule.id; message=warn});
+            }
+        }
+    }
+
+    // unused-import: 全文件分析
+    var importNames = {};
+    for(i=1; #lines; 1){
+        var line = lines[i];
+        var m = string.match(line, `^\s*import\s+([\w\.]+)`);
+        if(m){
+            var shortName = m;
+            var dotPos = string.match(m, `\.(\w+)$`);
+            if(dotPos) shortName = dotPos;
+            table.push(importNames, {full=m; short=shortName; line=i});
+        }
+    }
+    for(imp=1; #importNames; 1){
+        var impInfo = importNames[imp];
+        var used = false;
+        var searchPattern = `(^|\W)` ++ impInfo.short ++ `(\W|$)`;
+        for(i=1; #lines; 1){
+            if(i == impInfo.line) continue;
+            var line = lines[i];
+            if(string.match(line, searchPattern)){
+                used = true;
+                break;
+            }
+        }
+        if(!used){
+            table.push(warnings, {line=impInfo.line; id="unused-import"; message="导入了 " ++ impInfo.full ++ " 但未使用"});
+        }
+    }
+
+    // 输出
+    if(#warnings == 0){
+        _logInfo(_C.GRN ++ "  PASS  " ++ _C.RST ++ fullPath ++ " (无警告)");
+        addResult(fullPath, true, "lint", null, false, false, warnings);
+        return true;
+    }
+    _logInfo(_C.YLW ++ "  WARN  " ++ _C.RST ++ fullPath ++ " (" ++ #warnings ++ " 条警告)");
+    for(w=1; #warnings; 1){
+        var warn = warnings[w];
+        _logInfo("         " ++ _C.DIM ++ "L" ++ warn.line ++ _C.RST
+            ++ "  " ++ _C.MAG ++ warn.id ++ _C.RST
+            ++ ": " ++ warn.message);
+    }
+    addResult(fullPath, true, "lint", null, false, false, warnings);
+    return true;
+};
+
+// ═══════════════════════════════════════════════════
+// ─── SYMBOLS：符号提取/代码大纲 ───────────────────
+// ═══════════════════════════════════════════════════
+
+var extractSymbols = function(filePath, ignorePatterns){
+    var fullPath = io.fullpath(filePath);
+    if(!io.exist(fullPath)){
+        _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ "文件不存在: " ++ fullPath);
+        addResult(fullPath, false, "symbols", "文件不存在");
+        return false;
+    }
+    if(isIgnored(fullPath, ignorePatterns)){
+        _logInfo(_C.DIM ++ "  SKIP  " ++ _C.RST ++ fullPath);
+        addResult(fullPath, true, "symbols", null, false, false, null);
+        return true;
+    }
+
+    var code = string.load(fullPath);
+    var lines = splitLines(code);
+
+    var symbols = {
+        imports = {};
+        functions = {};
+        variables = {};
+        namespaces = {};
+    };
+
+    for(i=1; #lines; 1){
+        var line = lines[i];
+        var trimmed = string.trim(line);
+
+        // import 语句
+        var impName = string.match(trimmed, `^import\s+([\w\.]+)`);
+        if(impName){
+            table.push(symbols.imports, {name=impName; line=i});
+        }
+
+        // namespace 声明
+        var nsName = string.match(trimmed, `^namespace\s+(\w+)`);
+        if(nsName){
+            table.push(symbols.namespaces, {name=nsName; line=i});
+        }
+
+        // 函数定义
+        var funcName, funcParams = string.match(trimmed, `^var\s+(\w+)\s*=\s*function\s*\(([^)]*)\)`);
+        if(!funcName){
+            funcName, funcParams = string.match(trimmed, `^(\w+)\s*=\s*function\s*\(([^)]*)\)`);
+        }
+        if(!funcName){
+            funcName, funcParams = string.match(trimmed, `^function\s+(\w+)\s*\(([^)]*)\)`);
+        }
+        if(funcName and funcName != "onError" and !string.match(funcName, `^\d`)){
+            table.push(symbols.functions, {name=funcName; params=funcParams; line=i});
+        }
+
+        // 全局/顶层变量赋值
+        if(!string.match(line, `^\s`) and !string.match(trimmed, `^//`) and !string.match(trimmed, `^import`) and !string.match(trimmed, `^function`) and !string.match(trimmed, `^namespace`)){
+            var varName = string.match(trimmed, `^var\s+(\w+)`);
+            if(!varName){
+                varName = string.match(trimmed, `^(\w+)\s*=`);
+            }
+            if(varName and !string.match(varName, `^(if|else|for|while|return|try|catch|break|continue|switch|case|do|end)$`)){
+                var val = string.match(trimmed, `=\s*(.+)$`);
+                if(#symbols.functions == 0 or i <= 5){
+                    // 只记录文件头部的变量（启发式）
+                }
+                table.push(symbols.variables, {name=varName; value=val : ""; line=i});
+            }
+        }
+    }
+
+    // 文本输出
+    _logInfo(_C.CYN ++ "  SYMBOLS  " ++ _C.RST ++ fullPath);
+    if(#symbols.imports > 0){
+        _logInfo(_C.DIM ++ "  IMPORTS:" ++ _C.RST);
+        for(k=1; #symbols.imports; 1){
+            _logInfo("    " ++ symbols.imports[k].name ++ _C.DIM ++ "  [L" ++ symbols.imports[k].line ++ "]" ++ _C.RST);
+        }
+    }
+    if(#symbols.namespaces > 0){
+        _logInfo(_C.DIM ++ "  NAMESPACES:" ++ _C.RST);
+        for(k=1; #symbols.namespaces; 1){
+            _logInfo("    " ++ symbols.namespaces[k].name ++ _C.DIM ++ "  [L" ++ symbols.namespaces[k].line ++ "]" ++ _C.RST);
+        }
+    }
+    if(#symbols.functions > 0){
+        _logInfo(_C.DIM ++ "  FUNCTIONS:" ++ _C.RST);
+        for(k=1; #symbols.functions; 1){
+            var fn = symbols.functions[k];
+            _logInfo("    " ++ _C.GRN ++ fn.name ++ _C.RST ++ "(" ++ (fn.params : "") ++ ")" ++ _C.DIM ++ "  [L" ++ fn.line ++ "]" ++ _C.RST);
+        }
+    }
+    if(#symbols.variables > 0){
+        _logInfo(_C.DIM ++ "  VARIABLES:" ++ _C.RST);
+        for(k=1; #symbols.variables; 1){
+            var v = symbols.variables[k];
+            var valDisplay = #v.value > 40 ? string.slice(v.value, 1, 40) ++ "..." : v.value;
+            _logInfo("    " ++ _C.YLW ++ v.name ++ _C.RST ++ " = " ++ valDisplay ++ _C.DIM ++ "  [L" ++ v.line ++ "]" ++ _C.RST);
+        }
+    }
+    if(#symbols.imports + #symbols.functions + #symbols.variables + #symbols.namespaces == 0){
+        _logInfo(_C.DIM ++ "    (空文件或无可识别符号)" ++ _C.RST);
+    }
+
+    addResult(fullPath, true, "symbols", null, false, false, null, symbols);
+    return true;
+};
+
+// ═══════════════════════════════════════════════════
+// ─── IMPORTS：依赖图/导入验证 ────────────────────
+// ═══════════════════════════════════════════════════
+
+var checkImports = function(filePath, ignorePatterns){
+    var fullPath = io.fullpath(filePath);
+    if(!io.exist(fullPath)){
+        _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ "文件不存在: " ++ fullPath);
+        addResult(fullPath, false, "imports", "文件不存在");
+        return false;
+    }
+    if(isIgnored(fullPath, ignorePatterns)){
+        _logInfo(_C.DIM ++ "  SKIP  " ++ _C.RST ++ fullPath);
+        addResult(fullPath, true, "imports", null, false, false, null, null, {});
+        return true;
+    }
+
+    var code = string.load(fullPath);
+    var pathInfo = io.splitpath(fullPath);
+    var projectLibDir = pathInfo.dir ++ "\lib\";
+    var aalintDir = fsys.getExeDir();
+    var stdlibDir = aalintDir ++ "\lib\";
+
+    var importEntries = {};
+    var lines = splitLines(code);
+
+    for(i=1; #lines; 1){
+        var line = lines[i];
+        var impName = string.match(string.trim(line), `^import\s+([\w\.]+)`);
+        if(impName){
+            // aardio import 解析两种形式:
+            //   1. xxx.aardio 文件 (如 fsys.aardio)
+            //   2. xxx\_.aardio 目录 (如 web\view\_.aardio)
+            var relPathFile = string.replace(impName, `\.`, "\\") ++ ".aardio";
+            var relPathDir = string.replace(impName, `\.`, "\\") ++ "\\_.aardio";
+            var resolved = null;
+
+            // 优先级1: 项目 lib/ (文件形式)
+            var projectFilePath = projectLibDir ++ relPathFile;
+            if(io.exist(projectFilePath)) resolved = projectFilePath;
+            // 优先级1b: 项目 lib/ (目录形式)
+            if(!resolved){
+                var projectDirPath = projectLibDir ++ relPathDir;
+                if(io.exist(projectDirPath)) resolved = projectDirPath;
+            }
+
+            // 优先级2: 标准库 ~/lib/ (文件形式)
+            if(!resolved){
+                var stdFilePath = stdlibDir ++ relPathFile;
+                if(io.exist(stdFilePath)) resolved = stdFilePath;
+            }
+            // 优先级2b: 标准库 ~/lib/ (目录形式)
+            if(!resolved){
+                var stdDirPath = stdlibDir ++ relPathDir;
+                if(io.exist(stdDirPath)) resolved = stdDirPath;
+            }
+
+            table.push(importEntries, {name=impName; line=i; resolved=resolved});
+        }
+    }
+
+    var hasUnresolved = false;
+    _logInfo(_C.CYN ++ "  IMPORTS  " ++ _C.RST ++ fullPath);
+    for(k=1; #importEntries; 1){
+        var entry = importEntries[k];
+        if(entry.resolved){
+            _logInfo("    " ++ _C.GRN ++ "OK" ++ _C.RST ++ "  " ++ entry.name
+                ++ _C.DIM ++ "  -> " ++ entry.resolved ++ _C.RST);
+        } else {
+            hasUnresolved = true;
+            _logInfo("    " ++ _C.RED ++ "MISSING" ++ _C.RST ++ "  " ++ entry.name
+                ++ _C.DIM ++ "  (未找到对应库文件)" ++ _C.RST);
+        }
+    }
+    if(#importEntries == 0){
+        _logInfo(_C.DIM ++ "    (无 import 语句)" ++ _C.RST);
+    }
+
+    addResult(fullPath, !hasUnresolved, "imports", null, false, false, null, null, importEntries);
+    return !hasUnresolved;
+};
+
+// ═══════════════════════════════════════════════════
+// ─── API：标准库 API 查询 ────────────────────────
+// ═══════════════════════════════════════════════════
+
+var queryApi = function(libName){
+    var aalintDir = fsys.getExeDir();
+    // 尝试两种路径: xxx.aardio 文件 和 xxx\_.aardio 目录
+    var relPathFile = string.replace(libName, `\.`, "\\") ++ ".aardio";
+    var relPathDir = string.replace(libName, `\.`, "\\") ++ "\\_.aardio";
+    var tryFilePath = aalintDir ++ "\lib\" ++ relPathFile;
+    var tryDirPath = aalintDir ++ "\lib\" ++ relPathDir;
+    var libPath = null;
+    if(io.exist(tryFilePath)){
+        libPath = tryFilePath;
+    } elseif(io.exist(tryDirPath)){
+        libPath = tryDirPath;
+    }
+
+    if(!io.exist(libPath)){
+        _logErr(_C.RED ++ "  库未找到: " ++ libName ++ _C.RST);
+        _logErr(_C.DIM ++ "  尝试路径: " ++ tryFilePath ++ _C.RST);
+        _logErr(_C.DIM ++ "            " ++ tryDirPath ++ _C.RST);
+        addResult(libName, false, "api", "库未找到: " ++ libName);
+        return false;
+    }
+
+    var code = string.load(libPath);
+    var lines = splitLines(code);
+
+    var apiInfo = {
+        library = libName;
+        path = libPath;
+        exports = {};
+        classes = {};
+        properties = {};
+        docComments = {};
+    };
+
+    var lastDocComment = null;
+    for(i=1; #lines; 1){
+        var line = lines[i];
+        var trimmed = string.trim(line);
+
+        // 收集文档注释
+        if(string.match(trimmed, `^\s*///\s`)){
+            var dc = string.match(trimmed, `^\s*///\s*(.+)`);
+            lastDocComment = lastDocComment ? (lastDocComment ++ " " ++ dc) : dc;
+        }
+        if(string.match(trimmed, `^\s*/\*\*`)){
+            var dc2 = string.match(trimmed, `^\s*/\*\*\s*(.+)`);
+            lastDocComment = lastDocComment ? (lastDocComment ++ " " ++ dc2) : dc2;
+        }
+
+        // 导出函数
+        var funcName, funcParams = string.match(trimmed, `^(\w+)\s*=\s*function\s*\(([^)]*)\)`);
+        if(funcName){
+            table.push(apiInfo.exports, {name=funcName; params=funcParams : ""; line=i; doc=lastDocComment});
+            lastDocComment = null;
+        }
+
+        // class 定义
+        var className = string.match(trimmed, `^class\s+(\w+)`);
+        if(className){
+            table.push(apiInfo.classes, {name=className; line=i; doc=lastDocComment});
+            lastDocComment = null;
+        }
+
+        // 构造器
+        var ctorName = string.match(trimmed, `^(\w+)\s*\([^)]*\)\s*=\s*class\s*\{`);
+        if(ctorName){
+            table.push(apiInfo.classes, {name=ctorName; line=i; doc=lastDocComment});
+            lastDocComment = null;
+        }
+
+        // 简单属性赋值
+        var propName, propVal = string.match(trimmed, `^@(\w+)\s*=\s*(.+)`);
+        if(propName){
+            table.push(apiInfo.properties, {name=propName; value=propVal : ""; line=i; doc=lastDocComment});
+            lastDocComment = null;
+        }
+
+        // 非文档注释行清除 lastDocComment
+        if(!string.match(trimmed, `^\s*//`) and !string.match(trimmed, `^\*/`) and !string.match(trimmed, `^\s*\*`) and trimmed != ""){
+            if(!funcName and !className and !ctorName and !propName){
+                lastDocComment = null;
+            }
+        }
+    }
+
+    // 文本输出
+    _logInfo(_C.CYN ++ "  API: " ++ libName ++ _C.RST);
+    _logInfo(_C.DIM ++ "  路径: " ++ libPath ++ _C.RST);
+    _logInfo("");
+
+    if(#apiInfo.exports > 0){
+        _logInfo(_C.GRN ++ "  函数 (exports):" ++ _C.RST);
+        for(k=1; #apiInfo.exports; 1){
+            var e = apiInfo.exports[k];
+            var docStr = e.doc ? _C.DIM ++ "  -- " ++ e.doc ++ _C.RST : "";
+            _logInfo("    " ++ _C.GRN ++ e.name ++ _C.RST ++ "(" ++ e.params ++ ")" ++ docStr);
+        }
+    }
+    if(#apiInfo.classes > 0){
+        _logInfo(_C.YLW ++ "  类 (classes):" ++ _C.RST);
+        for(k=1; #apiInfo.classes; 1){
+            var c = apiInfo.classes[k];
+            var docStr = c.doc ? _C.DIM ++ "  -- " ++ c.doc ++ _C.RST : "";
+            _logInfo("    " ++ _C.YLW ++ c.name ++ _C.RST ++ docStr);
+        }
+    }
+    if(#apiInfo.properties > 0){
+        _logInfo(_C.MAG ++ "  属性 (properties):" ++ _C.RST);
+        for(k=1; #apiInfo.properties; 1){
+            var p = apiInfo.properties[k];
+            _logInfo("    " ++ _C.MAG ++ "@" ++ p.name ++ _C.RST ++ " = " ++ p.value);
+        }
+    }
+    if(#apiInfo.exports + #apiInfo.classes + #apiInfo.properties == 0){
+        _logInfo(_C.DIM ++ "  (未检测到公开 API，可能是内部库或命名空间)" ++ _C.RST);
+    }
+
+    addResult(libName, true, "api", null, false, false, null, null, null, apiInfo);
+    return true;
+};
+
+// ─── 核心函数 ───
+var checkFile = function(filePath, ignorePatterns){
+    var fullPath = io.fullpath(filePath);
+    if(!io.exist(fullPath)){
+        _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ "文件不存在: " ++ fullPath);
+        addResult(fullPath, false, "check", "文件不存在");
+        return false;
+    }
+    if(isIgnored(fullPath, ignorePatterns)){
+        _logInfo(_C.DIM ++ "  SKIP  " ++ _C.RST ++ fullPath ++ " (被 --ignore 排除)");
+        addResult(fullPath, true, "check", null, false);
+        return true;
+    }
+    var func, err = loadcode(fullPath);
+    if(func){
+        _logInfo(_C.GRN ++ "  PASS  " ++ _C.RST ++ fullPath);
+        addResult(fullPath, true, "check", null);
+        return true;
+    }
+    _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ fullPath);
+    _logErr(_C.DIM ++ "  ---- 错误详情 ----" ++ _C.RST);
+    _logErr(formatDebugOutput(err, fullPath));
+    _logErr(_C.DIM ++ "  ------------------" ++ _C.RST);
+    addResult(fullPath, false, "check", err);
+    return false;
+};
+
+// 生成行级 diff
+var _genDiff = function(oldCode, newCode){
+    var oldLines = splitLines(oldCode);
+    var newLines = splitLines(newCode);
+    var diffs = {};
+    var n = math.max(#oldLines, #newLines);
+    for(i=1; n; 1){
+        var oldL = oldLines[i] : "";
+        var newL = newLines[i] : "";
+        if(oldL != newL) table.push(diffs, {line=i, old=oldL, new=newL});
+    }
+    return diffs;
+};
+
+var fixFile = function(filePath, dryRun, ignorePatterns){
+    var fullPath = io.fullpath(filePath);
+    if(!io.exist(fullPath)){
+        _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ "文件不存在: " ++ fullPath);
+        addResult(fullPath, false, "fix", "文件不存在");
+        return false;
+    }
+    if(isIgnored(fullPath, ignorePatterns)){
+        _logInfo(_C.DIM ++ "  SKIP  " ++ _C.RST ++ fullPath ++ " (被 --ignore 排除)");
+        addResult(fullPath, true, "fix", null, false);
+        return true;
+    }
+    var original = string.load(fullPath);
+    var fixImportOk = true;
+    var fixImportErr = null;
+    try {
+        import ide.aifix;
+    }
+    catch(e) {
+        fixImportOk = false;
+        fixImportErr = e;
+    }
+    if(!fixImportOk){
+        var fixErr = "加载 ide.aifix 失败: " ++ tostring(fixImportErr);
+        _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ fixErr);
+        addResult(fullPath, false, "fix", fixErr);
+        return false;
+    }
+    var fixed = ide.aifix(original, true);
+    if(fixed == original){
+        _logInfo(_C.DIM ++ "  SAME  " ++ _C.RST ++ fullPath ++ " (无需修改)");
+        addResult(fullPath, true, "fix", null, false);
+        return true;
+    }
+    var diffs = _genDiff(original, fixed);
+    var label = dryRun ? "(dry-run)" : "(已自动修复)";
+    _logInfo(_C.YLW ++ "  FIX   " ++ _C.RST ++ fullPath
+        ++ " (" ++ #diffs ++ " 处修正" ++ (dryRun ? ", dry-run" : "") ++ ")");
+    for(i=1; #diffs; 1){
+        var oldText = "(新增)";
+        if(diffs[i].old) oldText = string.trim(diffs[i].old);
+        var newText = "(删除)";
+        if(diffs[i].new) newText = string.trim(diffs[i].new);
+        _logInfo("         L" ++ diffs[i].line ++ ": "
+            ++ _C.RED ++ "-" ++ oldText ++ _C.RST
+            ++ "  " ++ _C.YLW ++ "→" ++ _C.RST ++ "  "
+            ++ _C.GRN ++ "+" ++ newText ++ _C.RST);
+    }
+    if(!dryRun) string.save(fullPath, fixed);
+    addResult(fullPath, true, "fix", null, true, diffs);
+    return true;
+};
+
+var scanDir = function(dir, fileMask, callback, ignorePatterns){
+    import fsys;
+    var totalCount = 0;
+    var failCount = 0;
+    fsys.enum(dir, fileMask,
+        function(dirname, filename, fullpath, findData){
+            if(filename){
+                if(isIgnored(fullpath, ignorePatterns)) return;
+                totalCount++;
+                if(!callback(fullpath)) failCount++;
+            }
+        }
+    );
+    return { total = totalCount; fail = failCount };
+};
+
+// 控制已打开的 aardio IDE。统一使用官方 ide 库（外部进程模式自动转发到 IDE 主进程），
+// 不再手工扫描 MDIClient 窗口类名或硬编码 WM_COMMAND 命令 ID。
+var _ideCommandMeta = {
+    compile = { label = "编译"; note = "编译当前视图源码，不生成 dist exe。"; };
+    publish = { label = "发布"; note = "按当前工程 default.aproj 的 publishDir/output 生成 exe。"; };
+    run = { label = "运行"; };
+};
+
+var sendIdeCommand = function(commandName){
+    import ide;
+
+    var cmd = _ideCommandMeta[commandName];
+    if(!cmd){
+        _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ "未知 IDE 命令: " ++ tostring(commandName));
+        addResult("<ide>", false, "ide", "未知 IDE 命令: " ++ tostring(commandName));
+        return false;
+    }
+
+    var mainHwnd = ide.getMainHwnd();
+    if(!mainHwnd){
+        var err = "未找到已打开的 aardio IDE 主窗口";
+        _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ err);
+        _logErr(_C.DIM ++ "  请先打开 aardio IDE 并加载目标工程，再运行此命令。" ++ _C.RST);
+        addResult("<ide>", false, "ide-" ++ commandName, err);
+        return false;
+    }
+
+    if(commandName == "compile") ide.compile();
+    elseif(commandName == "run") ide.run();
+    elseif(commandName == "publish") ide.publish();
+
+    _logInfo(_C.GRN ++ "  PASS  " ++ _C.RST ++ "已向 aardio IDE 发送" ++ cmd.label ++ "命令"
+        ++ _C.DIM ++ " (hwnd=" ++ mainHwnd ++ ")" ++ _C.RST);
+    if(cmd.note){
+        _logInfo(_C.DIM ++ "  注: " ++ cmd.note ++ _C.RST);
+    }
+    if(commandName == "publish"){
+        _logInfo(_C.DIM ++ "  注: aalint 只触发 IDE 发布，不会自动复制或覆盖到 aalint.exe 所在目录。" ++ _C.RST);
+    }
+    addResult("<ide>", true, "ide-" ++ commandName, null, false, false, null, null, null, null, "hwnd=" ++ mainHwnd);
+    return true;
+};
+
+// --ide-goto <file:line>：在已打开的 aardio IDE 中打开文件并跳转到指定行
+var sendIdeGoto = function(filePath, lineNo){
+    import ide;
+
+    var mainHwnd = ide.getMainHwnd();
+    if(!mainHwnd){
+        var err = "未找到已打开的 aardio IDE 主窗口";
+        _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ err);
+        addResult("<ide>", false, "ide-goto", err);
+        return false;
+    }
+
+    var fullPath = io.fullpath(filePath);
+    if(!io.exist(fullPath)){
+        var notFound = "未找到文件: " ++ fullPath;
+        _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ notFound);
+        addResult("<ide>", false, "ide-goto", notFound);
+        return false;
+    }
+
+    ide.openDocument(fullPath);
+    if(lineNo && lineNo > 0){
+        ide.gotoLine(lineNo);
+    }
+
+    var detail = "hwnd=" ++ mainHwnd ++ ";file=" ++ fullPath;
+    _logInfo(_C.GRN ++ "  PASS  " ++ _C.RST ++ "已在 aardio IDE 中打开 " ++ fullPath
+        ++ (lineNo ? " 并跳转到第 " ++ lineNo ++ " 行" : "")
+        ++ _C.DIM ++ " (hwnd=" ++ mainHwnd ++ ")" ++ _C.RST);
+    if(lineNo) detail ++= ";line=" ++ lineNo;
+    addResult("<ide>", true, "ide-goto", null, false, false, null, null, null, null, detail);
+    return true;
+};
+
+var findIdeModalWindow = function(mainHwnd, titlePattern){
+    import win;
+    import winex;
+
+    var mainTid, mainPid = win.getThreadProcessId(mainHwnd);
+    var fallbackHwnd,fallbackTitle;
+    for hwnd,title,threadId,processId in winex.each(){
+        var ownerHwnd = ::User32.GetWindow(hwnd, 4/*GW_OWNER*/);
+        if(win.isVisible(hwnd) && !win.getParent(hwnd)
+            && (processId == mainPid || ownerHwnd == mainHwnd)
+            && hwnd != mainHwnd
+        ){
+            if(titlePattern && string.find(title : "", titlePattern)){
+                return hwnd,title;
+            }
+            if(!titlePattern) fallbackHwnd,fallbackTitle = hwnd,title;
+        }
+    }
+    return fallbackHwnd,fallbackTitle;
+};
+
+var closeIdeModalWindow = function(mainHwnd, closeMode){
+    import win;
+    import winex;
+
+    var dlgHwnd, dlgTitle;
+    if(closeMode == "esc"){
+        dlgHwnd,dlgTitle = findIdeModalWindow(mainHwnd, "已生成EXE文件");
+        if(!dlgHwnd) dlgHwnd,dlgTitle = findIdeModalWindow(mainHwnd, "生成");
+        if(!dlgHwnd) dlgHwnd,dlgTitle = findIdeModalWindow(mainHwnd);
+    }
+    else {
+        dlgHwnd,dlgTitle = findIdeModalWindow(mainHwnd);
+    }
+    if(!dlgHwnd) return false;
+
+    var waitClosed = function(hwnd, timeoutMs){
+        var deadline = time.tick() + (timeoutMs : 1000);
+        while(time.tick() < deadline){
+            if(!win.isWindow(hwnd)) return true;
+            sleep(50);
+        }
+        return !win.isWindow(hwnd);
+    };
+
+    var clickButton = function(textPatterns, commandId){
+        if(commandId){
+            ::User32.PostMessage(dlgHwnd, 0x111/*WM_COMMAND*/, commandId, 0);
+            if(waitClosed(dlgHwnd, 600)) return true;
+        }
+
+        for(i=1; #textPatterns; 1){
+            var btn = winex.findEx(dlgHwnd, 0, "Button", textPatterns[i]);
+            if(btn){
+                var ctrlId = ::User32.GetDlgCtrlID(btn);
+                ::User32.PostMessage(btn, 0xF5/*BM_CLICK*/, 0, 0);
+                if(waitClosed(dlgHwnd, 600)) return true;
+                if(ctrlId){
+                    ::User32.PostMessage(dlgHwnd, 0x111/*WM_COMMAND*/, ctrlId, btn);
+                    if(waitClosed(dlgHwnd, 600)) return true;
+                }
+            }
+        }
+        return false;
+    };
+
+    if(closeMode == "no"){
+        if(clickButton({"否"; "不保存"; "No"; "Don't Save"}, 7/*IDNO*/)){
+            return true,dlgTitle;
+        }
+    }
+    elseif(closeMode == "esc"){
+        if(clickButton({"关闭"; "确定"; "OK"}, 1/*IDOK*/)){
+            return true,dlgTitle;
+        }
+
+        if(winex.closeAndWait(dlgHwnd)){
+            return true,dlgTitle;
+        }
+        ::User32.PostMessage(dlgHwnd, 0x10/*WM_CLOSE*/, 0, 0);
+    }
+    else {
+        if(clickButton({"确定"; "OK"; "是"; "Yes"}, 1/*IDOK*/)){
+            return true,dlgTitle;
+        }
+    }
+    return waitClosed(dlgHwnd, 1000),dlgTitle;
+};
+
+var getProjectMainFileFromAproj = function(projectPath){
+    var projectText = string.load(projectPath);
+    if(!projectText) return;
+
+    var mainRel = string.match(projectText, `path="([^"]+\.aardio)"`);
+    if(!mainRel) return;
+
+    return io.fullpath(io.joinpath(io.splitpath(projectPath).dir, mainRel));
+};
+
+var sendIdePublishRefresh = function(){
+    import ide;
+    import win;
+    import key;
+
+    var projectPath = io.fullpath("default.aproj");
+    if(!io.exist(projectPath)){
+        var err = "当前目录未找到 default.aproj";
+        _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ err);
+        addResult("<ide>", false, "ide-publish-refresh", err);
+        return false;
+    }
+
+    var mainPath = ide.getProjectMainFile();
+    if(!mainPath){
+        mainPath = getProjectMainFileFromAproj(projectPath) : io.fullpath("main.aardio");
+    }
+    if(!io.exist(mainPath)){
+        var mainErr = "未找到工程主源码: " ++ mainPath;
+        _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ mainErr);
+        addResult("<ide>", false, "ide-publish-refresh", mainErr);
+        return false;
+    }
+
+    var mainHwnd = ide.getMainHwnd();
+    if(!mainHwnd){
+        var hwndErr = "未找到已打开的 aardio IDE 主窗口";
+        _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ hwndErr);
+        addResult("<ide>", false, "ide-publish-refresh", hwndErr);
+        return false;
+    }
+
+    ide.openDocument(projectPath);
+    sleep(1000);
+    ide.openDocument(mainPath);
+    sleep(1000);
+
+    win.setForeground(mainHwnd);
+    sleep(300);
+    key.combine("CTRL", "F4");
+    sleep(500);
+
+    var closed, dlgTitle = closeIdeModalWindow(mainHwnd, "no");
+    if(closed){
+        _logInfo(_C.DIM ++ "  已关闭 IDE 中的旧源码缓冲区: " ++ tostring(dlgTitle) ++ _C.RST);
+    }
+
+    ide.openDocument(mainPath);
+    sleep(1200);
+
+    var activeCode = ide.getActiveCode();
+    var activeVersion = null;
+    if(activeCode) activeVersion = string.match(activeCode, `_VERSION\s*=\s*"([^"]+)"`);
+    if(activeVersion){
+        _logInfo(_C.DIM ++ "  IDE 当前源码版本: " ++ activeVersion ++ _C.RST);
+    }
+
+    ide.publish();
+    for(i=1; 30; 1){
+        sleep(500);
+        var doneClosed, doneTitle = closeIdeModalWindow(mainHwnd, "esc");
+        if(doneClosed){
+            _logInfo(_C.DIM ++ "  已关闭 IDE 发布完成提示: " ++ tostring(doneTitle) ++ _C.RST);
+            break;
+        }
+    }
+    _logInfo(_C.GRN ++ "  PASS  " ++ _C.RST ++ "已重新载入磁盘源码并向 aardio IDE 发送发布命令"
+        ++ _C.DIM ++ " (hwnd=" ++ mainHwnd ++ ")" ++ _C.RST);
+    _logInfo(_C.DIM ++ "  注: 发布输出由 default.aproj 的 publishDir/output 决定，aalint 不会自动复制到 aalint.exe 所在目录。" ++ _C.RST);
+    addResult("<ide>", true, "ide-publish-refresh", null, false, false, null, null, null, null, "hwnd=" ++ mainHwnd);
+    return true;
+};
+
+var _traceIsolatedPath = null;
+var traceIsolated = function(msg){
+    if(!_traceIsolatedPath) return;
+    var f = io.open(_traceIsolatedPath, "a+");
+    if(f){
+        f.write(tostring(time.tick()), " ", tostring(msg), '\r\n');
+        f.close();
+    }
+};
+
+var traceText = function(v){
+    if(v === null) return "null";
+    return tostring(v);
+};
+
+var getIsolatedProcessStatus = function(hProcess){
+    if(!hProcess) return false, null, false;
+
+    var ok, code = process.GetExitCodeProcess(hProcess, 0);
+    if(!ok) return true, null, false;
+
+    return code == 0x103/*STILL_ACTIVE*/, code, true;
+};
+
+var closeIsolatedProcessHandles = function(pi){
+    if(!pi) return;
+    if(pi.hThread){
+        raw.closeHandle(pi.hThread);
+        pi.hThread = null;
+    }
+    if(pi.hProcess){
+        raw.closeHandle(pi.hProcess);
+        pi.hProcess = null;
+    }
+};
+
+var terminateIsolatedProcess = function(hProcess, exitcode = 1){
+    if(!hProcess) return false;
+
+    traceIsolated("terminate enter handle=" ++ traceText(hProcess));
+    var active0, code0, known0 = getIsolatedProcessStatus(hProcess);
+    if(known0 && !active0){
+        traceIsolated("terminate already inactive");
+        return true;
+    }
+
+    var terminated = false;
+    try {
+        terminated = process.TerminateProcess(hProcess, exitcode) ? true : false;
+        traceIsolated("terminate api returned " ++ traceText(terminated));
+        thread.waitOne(hProcess, 1000);
+        var active, code, known = getIsolatedProcessStatus(hProcess);
+        terminated = known && !active;
+        traceIsolated("terminate active after api=" ++ traceText(active) ++ " known=" ++ traceText(known));
+    }
+    catch(e) {
+        traceIsolated("terminate api err=" ++ traceText(e));
+    }
+
+    traceIsolated("terminate return " ++ traceText(terminated));
+    return terminated;
+};
+
+var _webSmokeClickScript = /**
+(function(){
+    if(!document || !document.getElementsByTagName) return;
+
+    var nodes = document.getElementsByTagName("*");
+    var list = new Array();
+    for(var i=0; i<nodes.length; i++){
+        var el = nodes[i];
+        var tag = (el.tagName ? el.tagName : "").toLowerCase();
+        var type = (el.type ? el.type : "").toLowerCase();
+        var role = "";
+        if(el.getAttribute) role = el.getAttribute("role");
+        if(!role) role = "";
+        var clickable = tag == "button"
+            || tag == "a"
+            || (tag == "input" && (type == "button" || type == "submit" || type == "checkbox" || type == "radio" || type == "reset"))
+            || role.toLowerCase() == "button"
+            || el.onclick
+            || (el.getAttribute && el.getAttribute("onclick"));
+        if(clickable) list[list.length] = el;
+    }
+
+    var maxClicks = list.length < 20 ? list.length : 20;
+    for(var j=0; j<maxClicks; j++){
+        var target = list[j];
+        try {
+            if(target.scrollIntoView) target.scrollIntoView(false);
+            if(target.click) {
+                target.click();
+            }
+            else if(target.fireEvent) {
+                target.fireEvent("onclick");
+            }
+        }
+        catch(ex) {
+        }
+    }
+})()
+**/;
+
+var _registerWebSmokeTarget = function(kind, wb){
+    if(!wb) return wb;
+    if(!.._aalintWebSmokeTargets) .._aalintWebSmokeTargets = {};
+    table.push(.._aalintWebSmokeTargets, {kind=kind; wb=wb});
+    return wb;
+};
+
+var installWebSmokeHooks = function(){
+    var hooks = {};
+    .._aalintWebSmokeTargets = {};
+
+    try {
+        import web.form;
+        hooks.webForm = ..web.form;
+        var origWebForm = ..web.form;
+        var webFormWrapper = class {
+            ctor(...){
+                return _registerWebSmokeTarget("web.form", origWebForm(...));
+            }
+        };
+        var formStaticNames = {"mapurl"; "disableNavigationSounds"; "enableTab"; "refreshOption"; "featureControl"; "emulation"; "gpuRendering"; "getMajorVersion"; "ie11"};
+        for(i=1; #formStaticNames; 1){
+            var k = formStaticNames[i];
+            if(!(origWebForm[k] === null)) webFormWrapper[k] = origWebForm[k];
+        }
+        ..web.form = webFormWrapper;
+    }
+    catch(e) {
+    }
+
+    try {
+        import web.view;
+        hooks.webView = ..web.view;
+        var origWebView = ..web.view;
+        var webViewWrapper = class {
+            ctor(...){
+                return _registerWebSmokeTarget("web.view", origWebView(...));
+            }
+        };
+        var viewStaticNames = {"getRuntimeInfo"; "checkRuntime"; "installRuntime"; "browserArguments"; "defaultUserDataDir"; "loadPreferences"};
+        for(i=1; #viewStaticNames; 1){
+            var k2 = viewStaticNames[i];
+            if(!(origWebView[k2] === null)) webViewWrapper[k2] = origWebView[k2];
+        }
+        if(origWebView.shared){
+            webViewWrapper.shared = function(...){
+                return _registerWebSmokeTarget("web.view", origWebView.shared(...));
+            };
+        }
+        ..web.view = webViewWrapper;
+    }
+    catch(e2) {
+    }
+
+    return hooks;
+};
+
+var restoreWebSmokeHooks = function(hooks){
+    if(!hooks) return;
+    if(hooks.webForm) ..web.form = hooks.webForm;
+    if(hooks.webView) ..web.view = hooks.webView;
+};
+
+var _clickWebFormQuery = function(wb, opt){
+    try {
+        var eles = wb.queryEles(opt);
+        if(eles) eles.click();
+    }
+    catch(e) {
+    }
+};
+
+var runWebSmokeTargets = function(){
+    var targets = .._aalintWebSmokeTargets;
+    if(!targets || !#targets) return 0;
+
+    var count = 0;
+    for(i=1; #targets; 1){
+        var item = targets[i];
+        var wb = item.wb;
+        if(wb){
+            count++;
+            var smokeOne = function(wb){
+                if(!wb) return;
+                if(item.kind == "web.form"){
+                    _clickWebFormQuery(wb, {tagName="button"});
+                    _clickWebFormQuery(wb, {tagName="a"});
+                    _clickWebFormQuery(wb, {tagName="input"; type="button"});
+                    _clickWebFormQuery(wb, {tagName="input"; type="submit"});
+                    _clickWebFormQuery(wb, {tagName="input"; type="checkbox"});
+                    _clickWebFormQuery(wb, {tagName="input"; type="radio"});
+                    _clickWebFormQuery(wb, {onclick=".*"});
+                }
+                elseif(wb.doScript){
+                    wb.doScript(_webSmokeClickScript);
+                }
+            };
+            if(wb._form && wb._form.setTimeout){
+                wb._form.setTimeout(smokeOne, 10, wb);
+            }
+            else {
+                smokeOne(wb);
+            }
+        }
+    }
+    return count;
+};
+
+// 崩溃退出码 → 可读提示（Chrome 多进程模型：子进程崩溃不影响父进程，还能给出诊断）
+var getCrashHint = function(code){
+    if(!code) return null;
+    var hints = {
+        [0xC0000005] = "访问违规(Access Violation)";
+        [0xC0000409] = "安全校验失败/栈缓冲区溢出";
+        [0xC00000FD] = "栈溢出(Stack Overflow)";
+        [0xC0000135] = "找不到所需 DLL";
+        [0xC0000142] = "DLL 初始化失败";
+        [0xC0000374] = "堆损坏(Heap Corruption)";
+    };
+    return hints[code];
+};
+
+// \u2500\u2500\u2500 快照 / Mock 源码注入 \u2500\u2500\u2500
+// 原理：编译前把注入代码拼进目标源码（win.loopMessage(); 之前），
+// 注入代码与目标代码同作用域，可直接读写 winform、业务变量、直接调用控件回调。
+// 返回注入代码字符串；mock 文件不存在返回 null（调用方应终止）。
+var buildSnapshotInject = function(setupPath, snapInPath, snapOutPath, snapGenPath, snapDelay){
+    var inject = {};
+    // 执行顺序（重要）: 快照恢复 -> mock 触发 -> 导出器
+    // snapshot-in 必须先于 --setup 执行，否则 mock 触发按钮时快照尚未恢复。
+    if(snapInPath){
+        var snapInFull = io.fullpath(snapInPath);
+        table.push(inject, `// ---- aalint --snapshot-in 注入 ----
+import JSON;
+var _snapInPath = "` ++ snapInFull ++ `";
+if(io.exist(_snapInPath) and winform){
+    var _snapData = JSON.load(_snapInPath);
+    if(_snapData.controls){
+        for(_snapName, _snapProps in _snapData.controls){
+            var _snapCtrl = winform[_snapName];
+            if(_snapCtrl){
+                for(_k,_v in _snapProps){
+                    _snapCtrl[_k] = _v;
+                }
+            }
+        }
+    }
+    if(_snapData.vars) winform.snapshotVars = _snapData.vars;
+}
+// ---- aalint --snapshot-in 结束 ----`);
+    }
+    if(setupPath){
+        var mockFull = io.fullpath(setupPath);
+        if(!io.exist(mockFull)){
+            _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ "mock 文件不存在: " ++ mockFull);
+            return null;
+        }
+        var mockCode = string.load(mockFull);
+        if(mockCode and #mockCode > 0){
+            table.push(inject, "// ---- aalint --setup 注入 (mock: " ++ setupPath ++ ") ----" ++ '\r\n' ++ mockCode);
+        }
+    }
+    if(snapOutPath or snapGenPath){
+        var snapOutFull = io.fullpath(snapOutPath ? snapOutPath : snapGenPath);
+        var delay = snapDelay : 3000;
+        if(snapGenPath) delay = 100; // 生成模板：窗口就绪后立即导出
+        table.push(inject, `// ---- aalint snapshot 导出器注入 ----
+import win.ui;
+import JSON;
+var _snapOutPath = "` ++ snapOutFull ++ `";
+var _snapOutDelay = ` ++ delay ++ `;
+if(winform){
+    winform.setTimeout(function(){
+        var _snap = { controls = {}; vars = {} };
+        for(_name, _ctrl in winform.eachControl()){
+            var _props = {
+                text = _ctrl.text;
+                visible = _ctrl.visible;
+                enabled = _ctrl.enabled;
+            };
+            if(_ctrl.checked != null) _props.checked = _ctrl.checked;
+            if(_ctrl.selIndex != null) _props.selIndex = _ctrl.selIndex;
+            if(_ctrl.selText != null) _props.selText = _ctrl.selText;
+            if(_ctrl.progressPos != null) _props.progressPos = _ctrl.progressPos;
+            _snap.controls[_name] = _props;
+        }
+        if(winform.snapshotVars) _snap.vars = winform.snapshotVars;
+        string.save(_snapOutPath, JSON.stringify(_snap, true));
+        winform.close();
+    }, _snapOutDelay);
+}
+// ---- snapshot 导出器结束 ----`);
+    }
+    if(!#inject) return "";
+    return string.join(inject, '\r\n') ++ '\r\n';
+};
+
+// 把注入代码插入目标源码：优先在 win.loopMessage(); 前，找不到则追加末尾
+// 注意: 换行分隔必须用单引号 '\r\n'（真实 CRLF），双引号是原样字符串不会转义！
+var injectIntoSource = function(sourceText, injectCode){
+    var mark = "win.loopMessage();";
+    var pos = string.indexOf(sourceText, mark);
+    if(pos){
+        return string.left(sourceText, pos-1) ++ injectCode ++ '\r\n' ++ string.slice(sourceText, pos);
+    }
+    return sourceText ++ '\r\n' ++ injectCode;
+};
+
+var runFileIsolated = function(filePath, timeout, customLib, libOnly, ignorePatterns, capture, uiSmoke, uiFlowPath, setupPath, snapInPath, snapOutPath, snapGenPath, snapDelay){
+    traceIsolated("enter runFileIsolated");
+    var fullPath = io.fullpath(filePath);
+    if(!io.exist(fullPath)){
+        _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ "文件不存在: " ++ fullPath);
+        addResult(fullPath, false, "run-isolated", "文件不存在");
+        return false;
+    }
+    if(isIgnored(fullPath, ignorePatterns)){
+        _logInfo(_C.DIM ++ "  SKIP  " ++ _C.RST ++ fullPath ++ " (被 --ignore 排除)");
+        addResult(fullPath, true, "run-isolated", null, false);
+        return true;
+    }
+
+    // —— Chrome 多进程模型：子进程隔离运行 + 实时输出回传 ——
+    // 子进程 = 独立 aalint.exe --run --capture --capture-out <file>，父进程实时增量读取输出文件。
+    // 即使子进程原生崩溃（0xC0000005 等），父进程毫发无损，且能读到崩溃前的 capture 文件内容。
+    import process.popen;
+
+    var capFilePath = io.tmpname("aalint_iso_cap_");
+    var childArgs = {"--run"; "--timeout"; "0"; "--capture"; "--capture-out"; capFilePath};
+    if(uiSmoke){
+        table.push(childArgs, "--ui-smoke");
+        table.push(childArgs, "--web-smoke");
+    }
+    if(uiFlowPath){
+        table.push(childArgs, "--ui-flow");
+        table.push(childArgs, io.fullpath(uiFlowPath));
+    }
+    if(setupPath){
+        table.push(childArgs, "--setup");
+        table.push(childArgs, io.fullpath(setupPath));
+    }
+    if(snapInPath){
+        table.push(childArgs, "--snapshot-in");
+        table.push(childArgs, io.fullpath(snapInPath));
+    }
+    if(snapOutPath){
+        table.push(childArgs, "--snapshot-out");
+        table.push(childArgs, io.fullpath(snapOutPath));
+    }
+    if(snapGenPath){
+        table.push(childArgs, "--snapshot-gen");
+        table.push(childArgs, io.fullpath(snapGenPath));
+    }
+    if(snapDelay and snapDelay != 3000){
+        table.push(childArgs, "--snapshot-delay");
+        table.push(childArgs, tostring(snapDelay));
+    }
+    if(customLib){
+        table.push(childArgs, libOnly ? "--lib-only" : "--lib");
+        table.push(childArgs, customLib);
+    }
+    for(i=1; #ignorePatterns; 1){
+        table.push(childArgs, "--ignore");
+        table.push(childArgs, ignorePatterns[i]);
+    }
+    table.push(childArgs, fullPath);
+
+    var joinArgs = {io._exepath};
+    for(ai=1; #childArgs; 1) table.push(joinArgs, childArgs[ai]);
+    traceIsolated("popen start: " ++ process.joinArguments(joinArgs));
+
+    var p, popenErr = process.popen(io._exepath, childArgs);
+    if(!p){
+        var spawnErr = popenErr : "启动隔离运行进程失败";
+        traceIsolated("popen failed err=" ++ traceText(spawnErr));
+        _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ spawnErr ++ ": " ++ fullPath);
+        addResult(fullPath, false, "run-isolated", spawnErr);
+        return false;
+    }
+    p.killOnExit(); // 父进程退出时自动清理子进程，防止残留
+
+    // 实时轮询：增量读取 capture 输出文件 + 探测子进程状态 + 超时强杀
+    var deadline = timeout > 0 ? (time.tick() + timeout * 1000) : null;
+    var timedOut = false;
+    var lastPos = 0;
+    var accOutput = "";
+    var echoOutput = function(content){
+        if(!content or #content == 0) return;
+        if(!_useJson){
+            io.stdout.write(content);
+            io.stdout.flush();
+        }
+        accOutput ++= content;
+    };
+
+    while(true){
+        // 增量读取子进程 capture 输出（--run 输出走 capture 文件，不走 stdout 管道）
+        var content = string.load(capFilePath);
+        if(content){
+            var contentLen = #content;
+            if(contentLen > lastPos){
+                echoOutput(string.slice(content, lastPos + 1, contentLen));
+                lastPos = contentLen;
+            }
+        }
+
+        if(!p.stillActive()){
+            traceIsolated("child inactive");
+            break;
+        }
+
+        if(deadline && time.tick() >= deadline){
+            timedOut = true;
+            traceIsolated("timeout reached, terminating child");
+            p.terminate();
+            break;
+        }
+
+        thread.delay(50);
+    }
+
+    // 子进程已退出：再读一次最终输出（原生崩溃时 capture 文件残留，仍可补救读取）
+    var content = string.load(capFilePath);
+    if(content and #content > lastPos){
+        echoOutput(string.slice(content, lastPos + 1, #content));
+    }
+    io.remove(capFilePath); // 父进程负责清理（子进程 --capture-out 保留了该文件）
+
+    var exitChild = null;
+    if(!timedOut){
+        var exited = false;
+        exitChild, exited = p.getExitCode();
+        if(exitChild === null) exitChild = 1;
+    }
+    traceIsolated("child exitCode=" ++ traceText(exitChild) ++ " timedOut=" ++ traceText(timedOut));
+
+    if(timedOut){
+        var timeoutErr = "隔离运行超时，已强制终止子进程";
+        _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ timeoutErr ++ ": " ++ fullPath);
+        addResult(fullPath, false, "run-isolated", timeoutErr, false, false, null, null, null, null, accOutput);
+        return false;
+    }
+
+    if(exitChild != 0){
+        var hint = getCrashHint(exitChild);
+        _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ "隔离运行失败: " ++ fullPath);
+        _logErr("    子进程退出码: " ++ exitChild ++ (hint ? "  (" ++ hint ++ ")" : ""));
+        if(hint){
+            _logErr(_C.YLW ++ "    提示: 子进程已崩溃，不影响 aalint；可结合上方输出与目标代码内 string.save(LOG,...) 分步日志定位崩溃点。" ++ _C.RST);
+        }
+        addResult(fullPath, false, "run-isolated", "子进程退出码: " ++ exitChild, false, false, null, null, null, null, accOutput);
+        return false;
+    }
+
+    _logInfo(_C.GRN ++ "  PASS  " ++ _C.RST ++ fullPath ++ _C.DIM ++ " (isolated)" ++ _C.RST);
+    addResult(fullPath, true, "run-isolated", null, false, false, null, null, null, null, accOutput);
+    return true;
+};
+var runFile = function(filePath, timeout, customLib, libOnly, ignorePatterns, capture, uiSmoke, webSmoke, uiFlowPath, captureOut, setupPath, snapInPath, snapOutPath, snapGenPath, snapDelay){
+    var fullPath = io.fullpath(filePath);
+    if(uiFlowPath) uiFlowPath = io.fullpath(uiFlowPath);
+    if(!io.exist(fullPath)){
+        _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ "文件不存在: " ++ fullPath);
+        addResult(fullPath, false, "run", "文件不存在");
+        return false;
+    }
+    if(isIgnored(fullPath, ignorePatterns)){
+        _logInfo(_C.DIM ++ "  SKIP  " ++ _C.RST ++ fullPath ++ " (被 --ignore 排除)");
+        addResult(fullPath, true, "run", null, false);
+        return true;
+    }
+
+    // 预编译检查
+    var _, preCompileErr = loadcode(fullPath);
+    if(!_){
+        _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ "编译错误: " ++ fullPath);
+        _logErr(_C.DIM ++ "  ---- 错误详情 ----" ++ _C.RST);
+        _logErr(formatDebugOutput(preCompileErr, fullPath));
+        _logErr(_C.DIM ++ "  ------------------" ++ _C.RST);
+        addResult(fullPath, false, "compile", preCompileErr);
+        return false;
+    }
+
+    var pathInfo = io.splitpath(fullPath);
+    var projectDir = pathInfo.dir;
+
+    if(customLib){
+        var customFull = io.fullpath(customLib);
+        if(!io.exist(customFull)){
+            _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ "库目录不存在: " ++ customFull);
+            addResult(fullPath, false, "run", "库目录不存在: " ++ customFull);
+            return false;
+        }
+        if(libOnly){
+            projectDir = io.splitpath(string.trim(customFull,"\\/"))["dir"];
+        } else {
+            var mergedDir = io.tmpname("aalint_lib_");
+            io.createDir(mergedDir);
+            var mergedLib = mergedDir ++ "/lib/";
+            io.createDir(mergedLib);
+            var projectLib = projectDir ++ "/lib/";
+            if(io.exist(projectLib)){
+                fsys.enum(projectLib, "*.*",
+                    function(dir,file,full,fd){
+                        if(file) io.copy(full, io.joinpath2(mergedLib, file));
+                    }, false
+                );
+            }
+            if(io.exist(customFull) && fsys.isDir(customFull)){
+                fsys.enum(customFull, "*.*",
+                    function(dir,file,full,fd){
+                        if(file) io.copy(full, io.joinpath2(mergedLib, file));
+                    }, false
+                );
+            }
+            projectDir = mergedDir;
+        }
+    }
+
+    var task = function(fullPath){
+        var rawErrors = {};
+        ..onError = function(err){
+            // 错误冒泡到线程顶层时才触发（如 UI 事件回调错误、未捕获错误）。
+            // 此时栈尚未展开，可用 debug.traceback 附加调用栈 —— 替代 IDE 弹窗的关键调试信息。
+            if(type(err) == "string"){
+                import debug;
+                var tb = debug.traceback(,"调用栈:",2);
+                if(tb && #tb > 0) err = err ++ '\n---------------------------------------------------\n' ++ tb;
+            }
+            table.push(rawErrors, err);
+            return true;
+        };
+        import console;
+        console.pause = function(){};
+        console.kbRead = function(wait){
+            return { wVirtualKeyCode = 0x0D };
+        };
+
+        // capture: 将 io.stdout 重定向到临时文件，并拦截 console.write / console.print / 全局 print
+        // （console 库的 print/write 通过 WriteConsoleB 直写控制台句柄，必须全部拦截才能捕获）
+        var _capFilePath = null;
+        var _origStdout = null;
+        var _origConWrite = null;
+        var _origConPrint = null;
+        var _origGlobalPrint = null;
+        if(capture){
+            import console;
+            _origConWrite = console.write;
+            _origConPrint = console.print;
+            _origGlobalPrint = ..print;
+            _capFilePath = captureOut ? io.fullpath(captureOut) : io.tmpname("aalint_cap_");
+            var capFile = io.open(_capFilePath, "w+");
+            if(capFile){
+                _origStdout = io.stdout;
+                io.stdout = capFile;
+            }
+            var capWrite = function(...){
+                var pp = {...};
+                for(ci=1; #pp; 1){
+                    if(io.stdout) io.stdout.write(tostring(pp[ci]));
+                }
+                if(io.stdout) io.stdout.flush(); // 及时落盘，供外部实时读取
+            };
+            // console.print 语义：参数间制表符分隔、数组序列化、尾部换行（模拟 console 库 print 格式）
+            var capPrint = function(...){
+                if(!io.stdout) return;
+                var pp = {...};
+                for(ci=1; #pp; 1){
+                    if(ci > 1) io.stdout.write('\t');
+                    var v = pp[ci];
+                    io.stdout.write(table.isArray(v) ? table.tostring(v) : tostring(v));
+                }
+                io.stdout.write('\n');
+                io.stdout.flush();
+            };
+            console.write = capWrite;
+            console.print = capPrint;
+            console.log = capPrint;
+            ..print = capPrint;
+        }
+
+        var webSmokeHooks = null;
+        if(webSmoke) webSmokeHooks = installWebSmokeHooks();
+
+        // 快照 / mock 注入：编译前把注入代码拼进源码（同作用域，可访问 winform 与业务变量）
+        var snapInject = buildSnapshotInject(setupPath, snapInPath, snapOutPath, snapGenPath, snapDelay);
+        if(snapInject == null){
+            if(capture and _origConWrite) console.write = _origConWrite;
+            if(capture and _origConPrint) console.print = _origConPrint;
+            if(capture and _origGlobalPrint) ..print = _origGlobalPrint;
+            if(capture and _origStdout and _capFilePath){
+                io.stdout.close();
+                io.stdout = _origStdout;
+                if(!captureOut) io.remove(_capFilePath);
+            }
+            fiber.yield({pass:false, stage:"compile", err:"mock 文件不存在", output:null});
+            return;
+        }
+        var _sourceText = string.load(fullPath);
+        var _patchedSource = (#snapInject) ? injectIntoSource(_sourceText, snapInject) : _sourceText;
+        var f, compileErr = loadcode(_patchedSource, fullPath);
+        if(!f){
+            restoreWebSmokeHooks(webSmokeHooks);
+            // 恢复
+            if(capture and _origConWrite) console.write = _origConWrite;
+            if(capture and _origConPrint) console.print = _origConPrint;
+            if(capture and _origGlobalPrint) ..print = _origGlobalPrint;
+            if(capture and _origStdout and _capFilePath){
+                io.stdout.close();
+                io.stdout = _origStdout;
+                if(!captureOut) io.remove(_capFilePath);
+            }
+            fiber.yield({pass:false, stage:"compile", err:compileErr, output:null});
+            return;
+        }
+        var ok, runErr = call(f);
+        restoreWebSmokeHooks(webSmokeHooks);
+        // 恢复 + 读取捕获内容
+        if(capture and _origConWrite) console.write = _origConWrite;
+        if(capture and _origConPrint) console.print = _origConPrint;
+        if(capture and _origGlobalPrint) ..print = _origGlobalPrint;
+        var capturedOutput = null;
+        if(capture and _origStdout and _capFilePath){
+            io.stdout.flush();
+            io.stdout.close();
+            io.stdout = _origStdout;
+            var capContent = string.load(_capFilePath);
+            if(capContent and #capContent > 0) capturedOutput = capContent;
+            if(!captureOut) io.remove(_capFilePath);
+        }
+        if(#rawErrors){
+            fiber.yield({pass:false, stage:"runtime", err:rawErrors[1], output:capturedOutput});
+            return;
+        }
+        if(!ok){
+            fiber.yield({pass:false, stage:"runtime", err:runErr, output:capturedOutput});
+            return;
+        }
+        fiber.yield({pass:true, stage:"ok", result:runErr, output:capturedOutput});
+    };
+
+    var f = fiber.create(task, projectDir);
+
+    var mainThreadId = ::Kernel32.GetCurrentThreadId();
+    var uiFlowStatusKey = null;
+    if(uiFlowPath) uiFlowStatusKey = "aalint_flow_" ++ mainThreadId ++ "_" ++ time.tick();
+
+    if(uiFlowPath){
+        thread.invoke(function(tid, flowPath, statusKey){
+            import win;
+            import mouse;
+            import JSON;
+            
+            var fail = function(message){
+                thread.set(statusKey, "ERR: " ++ tostring(message));
+                return false;
+            };
+            
+            try {
+                var flow = JSON.load(flowPath);
+                var flowOk = true;
+                if(!flow){
+                    fail("无法读取 UI flow: " ++ tostring(flowPath));
+                    flowOk = false;
+                }
+                var steps = null;
+                if(flowOk){
+                    steps = flow.steps ? flow.steps : flow;
+                    if(type(steps) != "table"){
+                        fail("UI flow 缺少 steps 数组");
+                        flowOk = false;
+                    }
+                }
+                if(flowOk){
+                
+                var findTarget = function(target){
+                    if(!target) return null;
+                    if(type(target) == "string") target = { text = target };
+                    if(target.hwnd) return target.hwnd;
+                    
+                    var wantClass = target["class"] || target.cls;
+                    var wantText = target.text;
+                    var wantContains = target.contains;
+                    var wantId = target.id;
+                    var wantIndex = target.index : 1;
+                    var matched = 0;
+                    var found = null;
+                    
+                    var isMatch = function(hwnd){
+                        if(wantClass && win.getClass(hwnd) != wantClass) return false;
+                        if(wantId && ::User32.GetDlgCtrlID(hwnd) != wantId) return false;
+                        if(wantText || wantContains){
+                            var text = win.getText(hwnd);
+                            if(wantText && text != wantText) return false;
+                            if(wantContains && !string.find(text, wantContains)) return false;
+                        }
+                        return true;
+                    };
+                    
+                    var visit = function(hwnd){
+                        if(found) return 0;
+                        if(isMatch(hwnd)){
+                            matched++;
+                            if(matched >= wantIndex){
+                                found = hwnd;
+                                return 0;
+                            }
+                        }
+                        return 1;
+                    };
+                    
+                    var childProc = raw.tostdcall(function(hwnd, lParam){
+                        return visit(hwnd);
+                    }, "int(int, int)");
+                    var topProc = raw.tostdcall(function(hwnd, lParam){
+                        if(!visit(hwnd)) return 0;
+                        ::User32.EnumChildWindows(hwnd, childProc, 0);
+                        if(found) return 0;
+                        return 1;
+                    }, "int(int, int)");
+                    ::User32.EnumThreadWindows(tid, topProc, 0);
+                    return found;
+                };
+                
+                var clickHwnd = function(hwnd, x, y){
+                    var rc = win.getRect(hwnd, true);
+                    x = x : ((rc.right - rc.left) / 2);
+                    y = y : ((rc.bottom - rc.top) / 2);
+                    mouse.click(rc.left + x, rc.top + y, true);
+                };
+                
+                var notifyCommand = function(hwnd, code){
+                    var parentHwnd = ::User32.GetParent(hwnd);
+                    if(parentHwnd){
+                        var ctrlId = ::User32.GetDlgCtrlID(hwnd);
+                        ::User32.PostMessage(parentHwnd, 0x111/*WM_COMMAND*/, ctrlId | ((code : 0) << 16), hwnd);
+                    }
+                };
+                
+                thread.delay(flow.delay : 600);
+                for(si=1; #steps; 1){
+                    var step = steps[si];
+                    var action = step.action || step.type;
+                    if(!action) return fail("UI flow 第 " ++ si ++ " 步缺少 action");
+                    
+                    if(action == "sleep" || action == "wait"){
+                        thread.delay(step.ms : step.delay : 300);
+                        continue;
+                    }
+                    
+                    var hwnd = findTarget(step.target || step);
+                    if(!hwnd) return fail("UI flow 第 " ++ si ++ " 步找不到目标控件");
+                    var className = win.getClass(hwnd);
+                    
+                    if(action == "click"){
+                        clickHwnd(hwnd, step.x, step.y);
+                    }
+                    elseif(action == "setText" || action == "input" || action == "type"){
+                        win.setText(hwnd, tostring(step.text : step.value : ""));
+                        notifyCommand(hwnd, 0x300/*EN_CHANGE*/);
+                    }
+                    elseif(action == "select"){
+                        if(className == "ComboBox"){
+                            var index = step.index : step.value : 1;
+                            ::User32.SendMessage(hwnd, 0x14E/*CB_SETCURSEL*/, index - 1, 0);
+                            notifyCommand(hwnd, 1/*CBN_SELCHANGE*/);
+                        }
+                        else {
+                            clickHwnd(hwnd, step.x, step.y);
+                        }
+                    }
+                    elseif(action == "check"){
+                        var checkValue = 1;
+                        if(step.value === false) checkValue = 0;
+                        ::User32.SendMessage(hwnd, 0xF1/*BM_SETCHECK*/, checkValue, 0);
+                        notifyCommand(hwnd, 0);
+                    }
+                    elseif(action == "assertText" || action == "expectText" || action == "verifyText" || action == "assert"){
+                        var actualText = win.getText(hwnd);
+                        var expectedText = step.equals : step.text : step.value : null;
+                        var expectedContains = step.contains;
+                        
+                        if(!(expectedText === null) && actualText != tostring(expectedText)){
+                            return fail("UI flow 第 " ++ si ++ " 步文本不匹配: 期望 " ++ tostring(expectedText) ++ "，实际 " ++ tostring(actualText));
+                        }
+                        if(expectedContains && !string.find(actualText, tostring(expectedContains))){
+                            return fail("UI flow 第 " ++ si ++ " 步文本不包含: 期望包含 " ++ tostring(expectedContains) ++ "，实际 " ++ tostring(actualText));
+                        }
+                        if(expectedText === null && !expectedContains){
+                            return fail("UI flow 第 " ++ si ++ " 步缺少文本断言字段: text/equals/contains/value");
+                        }
+                    }
+                    else {
+                        return fail("UI flow 第 " ++ si ++ " 步未知 action: " ++ tostring(action));
+                    }
+                    thread.delay(step.after : flow.stepDelay : 120);
+                }
+                thread.set(statusKey, "OK");
+                }
+            }
+            catch(e) {
+                fail(e);
+            }
+        }, mainThreadId, uiFlowPath, uiFlowStatusKey);
+    }
+    elseif(uiSmoke){
+        thread.invoke(function(tid){
+            import win;
+            import mouse;
+            thread.delay(600);
+            var clickChildProc = raw.tostdcall(function(hwnd, lParam){
+                var className = win.getClass(hwnd);
+                var parentHwnd = ::User32.GetParent(hwnd);
+                var ctrlId = ::User32.GetDlgCtrlID(hwnd);
+                
+                if(className == "ComboBox"){
+                    ::User32.SendMessage(hwnd, 0x14E/*CB_SETCURSEL*/, 1, 0);
+                    if(parentHwnd){
+                        ::User32.PostMessage(parentHwnd, 0x111/*WM_COMMAND*/, ctrlId | (1/*CBN_SELCHANGE*/ << 16), hwnd);
+                    }
+                }
+                elseif(className == "SysTreeView32"){
+                    var hItem = ::User32.SendMessage(hwnd, 0x110A/*TVM_GETNEXTITEM*/, 0/*TVGN_ROOT*/, 0);
+                    if(hItem){
+                        ::User32.SendMessage(hwnd, 0x110B/*TVM_SELECTITEM*/, 9/*TVGN_CARET*/, hItem);
+                        var x,y = win.toScreen(hwnd, 30, 10);
+                        mouse.click(x, y, true);
+                    }
+                }
+                
+                // BM_CLICK covers standard button/checkbox/radiobutton controls.
+                ::User32.PostMessage(hwnd, 0xF5/*BM_CLICK*/, 0, 0);
+                // Mouse click covers plus/custom controls that expose onMouseClick/oncommand.
+                ::User32.PostMessage(hwnd, 0x201/*WM_LBUTTONDOWN*/, 1/*MK_LBUTTON*/, 0x000A000A);
+                ::User32.PostMessage(hwnd, 0x202/*WM_LBUTTONUP*/, 0, 0x000A000A);
+                return 1;
+            }, "int(int, int)");
+            var clickTopProc = raw.tostdcall(function(hwnd, lParam){
+                ::User32.EnumChildWindows(hwnd, clickChildProc, 0);
+                return 1;
+            }, "int(int, int)");
+            ::User32.EnumThreadWindows(tid, clickTopProc, 0);
+            if(webSmoke) runWebSmokeTargets();
+        }, mainThreadId);
+    }
+
+    if(timeout > 0){
+        thread.invoke(function(tid, timeoutSec){
+            thread.delay(timeoutSec * 1000);
+            var enumProc = raw.tostdcall(function(hwnd, lParam){
+                ::User32.PostMessage(hwnd, 0x10/*WM_CLOSE*/, 0, 0);
+                return 1;
+            }, "int(int, int)");
+            ::User32.EnumThreadWindows(tid, enumProc, 0);
+        }, mainThreadId, timeout);
+    }
+
+    var fiberOk, result = fiber.resume(f, fullPath);
+
+    // 兜底清理本线程残留窗体（fiber 与主线程同线程；aalint 自身无窗口）。
+    // 覆盖超时后模态框未响应 WM_CLOSE、UI 冒烟/UI flow 未完全关闭等场景。
+    import win.ui;
+    win.form.destroyAll();
+    
+    var uiFlowErr = null;
+    if(uiFlowStatusKey){
+        var flowWaitMs = (timeout > 0) ? timeout * 1000 : 60000;
+        var flowStatus = thread.acquire(uiFlowStatusKey, flowWaitMs);
+        thread.set(uiFlowStatusKey, null);
+        if(!flowStatus){
+            uiFlowErr = "UI flow 未完成";
+        }
+        elseif(string.startWith(flowStatus, "ERR:")){
+            uiFlowErr = flowStatus;
+        }
+    }
+
+    if(!fiberOk || !result){
+        _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ "内部错误: " ++ fullPath);
+        if(!fiberOk) _logErr("  " ++ tostring(result));
+        var internalErr = fiberOk ? "内部执行未返回结果" : tostring(result);
+        addResult(fullPath, false, "run", internalErr);
+        return false;
+    } elseif(uiFlowErr){
+        _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ "UI flow 错误: " ++ fullPath);
+        _logErr(uiFlowErr);
+        addResult(fullPath, false, "ui-flow", uiFlowErr);
+        return false;
+    } elseif(!result.pass){
+        var label = result.stage == "compile" ? "编译错误" : "运行时错误";
+        _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ label ++ ": " ++ fullPath);
+        _logErr(_C.DIM ++ "  ---- 错误详情 ----" ++ _C.RST);
+        _logErr(formatDebugOutput(result.err, fullPath));
+        _logErr(_C.DIM ++ "  ------------------" ++ _C.RST);
+        addResult(fullPath, false, result.stage, result.err);
+        return false;
+    } else {
+        _logInfo(_C.GRN ++ "  PASS  " ++ _C.RST ++ fullPath);
+        if(!(result.result === null)){
+            _logInfo(result.result);
+        }
+        var capturedOutput = null;
+        if(capture and result.output){
+            capturedOutput = result.output;
+            _logInfo(_C.DIM ++ "  ---- 输出 ----" ++ _C.RST);
+            _logInfo(capturedOutput);
+            _logInfo(_C.DIM ++ "  -------------" ++ _C.RST);
+        }
+        addResult(fullPath, true, "run", null, false, false, null, null, null, null, capturedOutput);
+        return true;
+    }
+};
+
+// ─── 参数解析 ───
+var args = {};
+for(i=1; #_ARGV; 1){
+    table.push(args, _ARGV[i]);
+}
+
+var opts = {
+    mode = "check";
+    dir = null;
+    run = false;
+    runIsolated = false;
+    fix = false;
+    lint = false;
+    symbols = false;
+    imports2 = false;
+    api = null;
+    ideCommand = null;
+    capture = false;
+    captureOut = null;
+    setupPath = null;
+    snapInPath = null;
+    snapOutPath = null;
+    snapGenPath = null;
+    snapDelay = 3000;
+    uiSmoke = false;
+    webSmoke = false;
+    uiFlowPath = null;
+    evalExpr = null;
+    dryRun = false;
+    timeout = 5;
+    customLib = null;
+    libOnly = false;
+    ignorePatterns = {};
+    json = false;
+    files = {};
+    aiGuide = false;
+    showHelp = false;
+    showVersion = false;
+};
+
+var i = 1;
+while(i <= #args){
+    var arg = args[i];
+    if(arg == "--help" || arg == "-h" || arg == "/?"){
+        opts.showHelp = true;
+    } elseif(arg == "--version" || arg == "-v"){
+        opts.showVersion = true;
+    } elseif(arg == "--ai-guide"){
+        opts.aiGuide = true;
+        opts.mode = "aiGuide";
+    } elseif(arg == "--run" || arg == "-r"){
+        if(opts.mode != "dir") opts.mode = "run";
+        opts.run = true;
+    } elseif(arg == "--run-isolated"){
+        if(opts.mode != "dir") opts.mode = "run";
+        opts.run = true;
+        opts.runIsolated = true;
+    } elseif(arg == "--fix" || arg == "-f"){
+        if(opts.mode != "dir") opts.mode = "fix";
+        opts.fix = true;
+    } elseif(arg == "--dry-run"){
+        opts.dryRun = true;
+    } elseif(arg == "--lint" || arg == "-l"){
+        opts.lint = true;
+        if(opts.mode != "dir") opts.mode = "lint";
+    } elseif(arg == "--symbols" || arg == "-s"){
+        opts.symbols = true;
+        if(opts.mode != "dir") opts.mode = "symbols";
+    } elseif(arg == "--imports" || arg == "-i"){
+        opts.imports2 = true;
+        if(opts.mode != "dir") opts.mode = "imports";
+    } elseif(arg == "--api" || arg == "-a"){
+        i++;
+        if(i <= #args){
+            opts.api = args[i];
+            opts.mode = "api";
+        }
+    } elseif(arg == "--ide-compile"){
+        opts.ideCommand = "compile";
+        opts.mode = "ide";
+    } elseif(arg == "--ide-run"){
+        opts.ideCommand = "run";
+        opts.mode = "ide";
+    } elseif(arg == "--ide-publish"){
+        opts.ideCommand = "publish";
+        opts.mode = "ide";
+    } elseif(arg == "--ide-publish-refresh"){
+        opts.ideCommand = "publish-refresh";
+        opts.mode = "ide";
+    } elseif(arg == "--ide-goto"){
+        opts.ideCommand = "goto";
+        opts.mode = "ide";
+        i++;
+        if(i <= #args){
+            var gotoTarget = args[i];
+            // 注意: aardio 模式匹配中 `:` 是多字节字符匹配符，字面冒号必须转义为 \:
+            var filePart,linePart = string.match(gotoTarget, `^(.+?)\:(\d+)$`);
+            if(filePart){
+                opts.ideGotoFile = filePart;
+                opts.ideGotoLine = tonumber(linePart);
+            } else {
+                opts.ideGotoFile = gotoTarget;
+                opts.ideGotoLine = null;
+            }
+        }
+    } elseif(arg == "--capture"){
+        opts.capture = true;
+    } elseif(arg == "--capture-out"){
+        i++;
+        if(i <= #args) opts.captureOut = args[i];
+    } elseif(arg == "--setup"){
+        i++;
+        if(i <= #args) opts.setupPath = args[i];
+    } elseif(arg == "--snapshot-in"){
+        i++;
+        if(i <= #args) opts.snapInPath = args[i];
+    } elseif(arg == "--snapshot-out"){
+        i++;
+        if(i <= #args) opts.snapOutPath = args[i];
+    } elseif(arg == "--snapshot-gen"){
+        i++;
+        if(i <= #args) opts.snapGenPath = args[i];
+    } elseif(arg == "--snapshot-delay"){
+        i++;
+        if(i <= #args) opts.snapDelay = tonumber(args[i]) : 3000;
+    } elseif(arg == "--ui-smoke"){
+        opts.uiSmoke = true;
+    } elseif(arg == "--ui-flow"){
+        i++;
+        if(i <= #args) opts.uiFlowPath = args[i];
+    } elseif(arg == "--web-smoke"){
+        opts.uiSmoke = true;
+        opts.webSmoke = true;
+    } elseif(arg == "--trace-isolated"){
+        i++;
+        if(i <= #args) _traceIsolatedPath = io.fullpath(args[i]);
+    } elseif(arg == "--isolated"){
+        opts.runIsolated = true;
+    } elseif(arg == "--eval" || arg == "-e"){
+        i++;
+        if(i <= #args){
+            opts.evalExpr = args[i];
+            opts.mode = "eval";
+        }
+    } elseif(arg == "--dir" || arg == "-d"){
+        opts.mode = "dir";
+        i++;
+        if(i <= #args && !(string.startWith(args[i], "-"))){
+            opts.dir = args[i];
+        } else {
+            i--;
+        }
+    } elseif(arg == "--timeout"){
+        i++;
+        if(i <= #args) opts.timeout = tonumber(args[i]) : 5;
+    } elseif(arg == "--lib"){
+        i++;
+        if(i <= #args) opts.customLib = args[i];
+    } elseif(arg == "--lib-only"){
+        i++;
+        if(i <= #args){
+            opts.customLib = args[i];
+            opts.libOnly = true;
+        }
+    } elseif(arg == "--ignore"){
+        i++;
+        if(i <= #args) table.push(opts.ignorePatterns, args[i]);
+    } elseif(arg == "--json" || arg == "-j"){
+        opts.json = true;
+    } elseif(arg == "--check" || arg == "-c"){
+    } else {
+        table.push(opts.files, arg);
+    }
+    i++;
+}
+
+if(opts.mode == "dir" && opts.run) opts.mode = "dirRun";
+if(opts.mode == "dir" && opts.fix) opts.mode = "dirFix";
+if(opts.mode == "dir" && opts.lint) opts.mode = "dirLint";
+if(opts.mode == "dir" && opts.symbols) opts.mode = "dirSymbols";
+if(opts.mode == "dir" && opts.imports2) opts.mode = "dirImports";
+if(string.match(opts.mode, `^dir`) && !opts.dir && #opts.files > 0){
+    opts.dir = table.remove(opts.files, 1);
+}
+
+// ─── JSON 模式激活 ───
+_useJson = opts.json;
+
+// ─── 执行 ───
+if(#args == 0 || opts.showHelp){
+    printHelp();
+    if(#args == 0) exitCode = 2;
+} elseif(opts.showVersion){
+    printVersion();
+} elseif(opts.aiGuide){
+    printAiGuide();
+} elseif(opts.mode == "api"){
+    if(!opts.api){
+        _logErr(_C.RED ++ "请指定要查询的库名，如 --api web.view" ++ _C.RST);
+        exitCode = 2;
+    } else {
+        if(!queryApi(opts.api)) exitCode = 1;
+    }
+} elseif(opts.mode == "ide"){
+    var ideOk;
+    if(opts.ideCommand == "publish-refresh"){
+        ideOk = sendIdePublishRefresh();
+    }
+    elseif(opts.ideCommand == "goto"){
+        ideOk = sendIdeGoto(opts.ideGotoFile, opts.ideGotoLine);
+    }
+    else {
+        ideOk = sendIdeCommand(opts.ideCommand);
+    }
+    if(!ideOk){
+        exitCode = 1;
+    }
+} elseif(opts.mode == "eval"){
+    if(!opts.evalExpr){
+        _logErr(_C.RED ++ `请指定要求值的表达式，如 --eval "1+2"` ++ _C.RST);
+        exitCode = 2;
+    } else {
+        // 用 fiber 执行表达式
+        var exprTask = function(expr){
+            var rawErrors2 = {};
+            ..onError = function(err2){
+                if(type(err2) == "string"){
+                    import debug;
+                    var tb2 = debug.traceback(,"调用栈:",2);
+                    if(tb2 && #tb2 > 0) err2 = err2 ++ '\n---------------------------------------------------\n' ++ tb2;
+                }
+                table.push(rawErrors2, err2);
+                return true;
+            };
+            var f2, cErr = loadcode("return(" ++ expr ++ ");", "<eval>");
+            if(!f2){
+                fiber.yield({pass:false, stage:"compile", err:cErr});
+                return;
+            }
+            var ok2, r2 = call(f2);
+            if(#rawErrors2){
+                fiber.yield({pass:false, stage:"runtime", err:rawErrors2[1]});
+                return;
+            }
+            if(!ok2){
+                fiber.yield({pass:false, stage:"runtime", err:r2});
+                return;
+            }
+            fiber.yield({pass:true, stage:"ok", result:r2});
+        };
+        var ef = fiber.create(exprTask, fsys.getExeDir());
+        var eOk, eResult = fiber.resume(ef, opts.evalExpr);
+        if(!eOk || !eResult){
+            _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ "求值错误");
+            var evalErr = "求值未返回结果";
+            if(eResult){
+                evalErr = eResult.err;
+                if(evalErr === null) evalErr = tostring(eResult);
+            }
+            _logErr(formatDebugOutput(evalErr, null));
+            addResult("<eval>", false, "eval", evalErr);
+            exitCode = 1;
+        } elseif(!eResult.pass){
+            _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ (eResult.stage == "compile" ? "编译错误" : "运行时错误"));
+            _logErr(formatDebugOutput(eResult.err, null));
+            addResult("<eval>", false, "eval", eResult.err);
+            exitCode = 1;
+        } else {
+            _logInfo(_C.GRN ++ "  => " ++ _C.RST ++ string.dump(eResult.result));
+            addResult("<eval>", true, "eval", null, false, false, null, null, null, null, string.dump(eResult.result));
+        }
+    }
+} elseif(opts.mode == "run"){
+    if(#opts.files == 0){
+        _logErr(_C.RED ++ "请指定要运行的文件路径" ++ _C.RST);
+        exitCode = 2;
+    } else {
+        for(j=1; #opts.files; 1){
+            traceIsolated("before run mode file " ++ tostring(j));
+            var runOk;
+            // runOk 可能为 false，不能用 ?:，否则会落入右侧 fallback 分支。
+            if(opts.runIsolated){
+                runOk = runFileIsolated(opts.files[j], opts.timeout, opts.customLib, opts.libOnly, opts.ignorePatterns, opts.capture, opts.uiSmoke, opts.uiFlowPath, opts.setupPath, opts.snapInPath, opts.snapOutPath, opts.snapGenPath, opts.snapDelay);
+            }
+            else {
+                runOk = runFile(opts.files[j], opts.timeout, opts.customLib, opts.libOnly, opts.ignorePatterns, opts.capture, opts.uiSmoke, opts.webSmoke, opts.uiFlowPath, opts.captureOut, opts.setupPath, opts.snapInPath, opts.snapOutPath, opts.snapGenPath, opts.snapDelay);
+            }
+            traceIsolated("after run mode file " ++ tostring(j) ++ " ok=" ++ tostring(runOk));
+            if(!runOk){
+                exitCode = 1;
+            }
+        }
+        traceIsolated("after run mode loop exitCode=" ++ tostring(exitCode));
+    }
+} elseif(opts.mode == "lint"){
+    if(#opts.files == 0){
+        _logErr(_C.RED ++ "请指定要 lint 的文件路径" ++ _C.RST);
+        exitCode = 2;
+    } else {
+        _logInfo(_C.CYN ++ "aardio 陷阱规则检测" ++ _C.RST);
+        _logInfo(_C.DIM ++ "---" ++ _C.RST);
+        var lintOk = true;
+        for(j=1; #opts.files; 1){
+            if(!lintFile(opts.files[j], opts.ignorePatterns)) lintOk = false;
+        }
+        _logInfo(_C.DIM ++ "---" ++ _C.RST);
+        if(!lintOk) exitCode = 1;
+    }
+} elseif(opts.mode == "symbols"){
+    if(#opts.files == 0){
+        _logErr(_C.RED ++ "请指定要提取符号的文件路径" ++ _C.RST);
+        exitCode = 2;
+    } else {
+        var symbolsOk = true;
+        for(j=1; #opts.files; 1){
+            if(!extractSymbols(opts.files[j], opts.ignorePatterns)) symbolsOk = false;
+        }
+        if(!symbolsOk) exitCode = 1;
+    }
+} elseif(opts.mode == "imports"){
+    if(#opts.files == 0){
+        _logErr(_C.RED ++ "请指定要检查导入的文件路径" ++ _C.RST);
+        exitCode = 2;
+    } else {
+        var allResolved = true;
+        for(j=1; #opts.files; 1){
+            if(!checkImports(opts.files[j], opts.ignorePatterns)) allResolved = false;
+        }
+        if(!allResolved) exitCode = 1;
+    }
+} elseif(opts.mode == "fix"){
+    if(#opts.files == 0){
+        _logErr(_C.RED ++ "请指定要修复的文件路径" ++ _C.RST);
+        exitCode = 2;
+    } else {
+        var allOk = true;
+        for(j=1; #opts.files; 1){
+            if(!fixFile(opts.files[j], opts.dryRun, opts.ignorePatterns)) allOk = false;
+        }
+        if(!allOk) exitCode = 1;
+    }
+} elseif(opts.mode == "dir"){
+    if(!opts.dir){
+        _logErr(_C.RED ++ "请指定目录路径" ++ _C.RST);
+        exitCode = 2;
+    } else {
+        var fullDir = io.fullpath(opts.dir);
+        if(!io.exist(fullDir)){
+            _logErr(_C.RED ++ "目录不存在: " ++ fullDir ++ _C.RST);
+            exitCode = 2;
+        } else {
+            _logInfo(_C.CYN ++ "检查目录: " ++ fullDir ++ _C.RST);
+            _logInfo(_C.DIM ++ "---" ++ _C.RST);
+            var result = scanDir(fullDir, "*.aardio",
+                lambda(fullpath) checkFile(fullpath, opts.ignorePatterns),
+                opts.ignorePatterns
+            );
+            _logInfo(_C.DIM ++ "---" ++ _C.RST);
+            _logInfo("检查完成: " ++ result.total ++ " 个文件, " ++
+                (result.fail > 0 ? _C.RED : _C.GRN) ++ result.fail ++ _C.RST ++ " 个错误");
+            if(result.fail > 0) exitCode = 1;
+        }
+    }
+} elseif(opts.mode == "dirRun"){
+    if(!opts.dir){
+        _logErr(_C.RED ++ "请指定目录路径" ++ _C.RST);
+        exitCode = 2;
+    } else {
+        var fullDir = io.fullpath(opts.dir);
+        if(!io.exist(fullDir)){
+            _logErr(_C.RED ++ "目录不存在: " ++ fullDir ++ _C.RST);
+            exitCode = 2;
+        } else {
+            var fileList2 = {};
+            fsys.enum(fullDir, "*.aardio",
+                function(dirname, filename, fullpath, findData){
+                    if(filename && !isIgnored(fullpath, opts.ignorePatterns)){
+                        table.push(fileList2, fullpath);
+                    }
+                }
+            );
+            var total2 = #fileList2;
+            if(total2 == 0){
+                _logInfo(_C.YLW ++ "未找到 .aardio 文件" ++ _C.RST);
+            } else {
+                _logInfo(_C.CYN ++ "运行检查目录: " ++ fullDir ++ _C.RST);
+                _logInfo("共 " ++ total2 ++ " 个文件, 单文件超时 " ++ opts.timeout ++ " 秒");
+                _logInfo(_C.DIM ++ "---" ++ _C.RST);
+
+                var failCount2 = 0;
+                var totalElapsed2 = 0;
+                for(k2=1; total2; 1){
+                    var tStart2 = time.tick();
+                    var relPath2 = string.replace(fileList2[k2], fullDir ++ "\\", "");
+                    _logInfo("[" ++ k2 ++ "/" ++ total2 ++ "] " ++ relPath2 ++ " ...");
+
+                    var runOk2;
+                    // runOk2 可能为 false，不能用 ?:，否则会落入右侧 fallback 分支。
+                    if(opts.runIsolated){
+                        runOk2 = runFileIsolated(fileList2[k2], opts.timeout, opts.customLib, opts.libOnly, opts.ignorePatterns, opts.capture, opts.uiSmoke, opts.uiFlowPath, opts.setupPath, opts.snapInPath, opts.snapOutPath, opts.snapGenPath, opts.snapDelay);
+                    }
+                    else {
+                        runOk2 = runFile(fileList2[k2], opts.timeout, opts.customLib, opts.libOnly, opts.ignorePatterns, opts.capture, opts.uiSmoke, opts.webSmoke, opts.uiFlowPath, opts.captureOut, opts.setupPath, opts.snapInPath, opts.snapOutPath, opts.snapGenPath, opts.snapDelay);
+                    }
+                    if(!runOk2){
+                        failCount2++;
+                    }
+                    var elapsed2 = time.tick() - tStart2;
+                    totalElapsed2 += elapsed2;
+                    _logInfo(_C.DIM ++ "      耗时 " ++ string.format("%.2f", elapsed2/1000) ++ "s" ++ _C.RST);
+                }
+                _logInfo(_C.DIM ++ "---" ++ _C.RST);
+                var summary2 = "运行检查完成: " ++ total2 ++ " 个文件, ";
+                summary2 ++= (failCount2 > 0 ? _C.RED : _C.GRN) ++ failCount2 ++ _C.RST ++ " 个错误";
+                summary2 ++= _C.DIM ++ " | 总耗时 " ++ string.format("%.2f", totalElapsed2/1000) ++ "s" ++ _C.RST;
+                _logInfo(summary2);
+                if(failCount2 > 0) exitCode = 1;
+            }
+        }
+    }
+} elseif(opts.mode == "dirFix"){
+    if(!opts.dir){
+        _logErr(_C.RED ++ "请指定目录路径" ++ _C.RST);
+        exitCode = 2;
+    } else {
+        var fullDir = io.fullpath(opts.dir);
+        if(!io.exist(fullDir)){
+            _logErr(_C.RED ++ "目录不存在: " ++ fullDir ++ _C.RST);
+            exitCode = 2;
+        } else {
+            _logInfo(_C.YLW ++ "自动修复目录: " ++ fullDir ++ _C.RST);
+            _logInfo(_C.DIM ++ "---" ++ _C.RST);
+            var result2 = scanDir(fullDir, "*.aardio",
+                lambda(fullpath) fixFile(fullpath, opts.dryRun, opts.ignorePatterns),
+                opts.ignorePatterns
+            );
+            _logInfo(_C.DIM ++ "---" ++ _C.RST);
+            _logInfo("修复完成: " ++ result2.total ++ " 个文件, " ++
+                (result2.fail > 0 ? _C.RED : _C.GRN) ++ result2.fail ++ _C.RST ++ " 个失败");
+            if(result2.fail > 0) exitCode = 1;
+        }
+    }
+} elseif(opts.mode == "dirLint"){
+    if(!opts.dir){
+        _logErr(_C.RED ++ "请指定目录路径" ++ _C.RST);
+        exitCode = 2;
+    } else {
+        var fullDir = io.fullpath(opts.dir);
+        if(!io.exist(fullDir)){
+            _logErr(_C.RED ++ "目录不存在: " ++ fullDir ++ _C.RST);
+            exitCode = 2;
+        } else {
+            _logInfo(_C.CYN ++ "Lint 目录: " ++ fullDir ++ _C.RST);
+            _logInfo(_C.DIM ++ "---" ++ _C.RST);
+            var lintResult = scanDir(fullDir, "*.aardio",
+                lambda(fullpath) lintFile(fullpath, opts.ignorePatterns),
+                opts.ignorePatterns
+            );
+            _logInfo(_C.DIM ++ "---" ++ _C.RST);
+            _logInfo("Lint 完成: " ++ lintResult.total ++ " 个文件");
+        }
+    }
+} elseif(opts.mode == "dirSymbols"){
+    if(!opts.dir){
+        _logErr(_C.RED ++ "请指定目录路径" ++ _C.RST);
+        exitCode = 2;
+    } else {
+        var fullDir = io.fullpath(opts.dir);
+        if(!io.exist(fullDir)){
+            _logErr(_C.RED ++ "目录不存在: " ++ fullDir ++ _C.RST);
+            exitCode = 2;
+        } else {
+            var symFileList = {};
+            fsys.enum(fullDir, "*.aardio",
+                function(dirname, filename, fullpath, findData){
+                    if(filename && !isIgnored(fullpath, opts.ignorePatterns)){
+                        table.push(symFileList, fullpath);
+                    }
+                }
+            );
+            for(si=1; #symFileList; 1){
+                extractSymbols(symFileList[si], opts.ignorePatterns);
+                _logInfo("");
+            }
+        }
+    }
+} elseif(opts.mode == "dirImports"){
+    if(!opts.dir){
+        _logErr(_C.RED ++ "请指定目录路径" ++ _C.RST);
+        exitCode = 2;
+    } else {
+        var fullDir = io.fullpath(opts.dir);
+        if(!io.exist(fullDir)){
+            _logErr(_C.RED ++ "目录不存在: " ++ fullDir ++ _C.RST);
+            exitCode = 2;
+        } else {
+            var impOk = true;
+            var impFileList = {};
+            fsys.enum(fullDir, "*.aardio",
+                function(dirname, filename, fullpath, findData){
+                    if(filename && !isIgnored(fullpath, opts.ignorePatterns)){
+                        table.push(impFileList, fullpath);
+                    }
+                }
+            );
+            for(ii=1; #impFileList; 1){
+                if(!checkImports(impFileList[ii], opts.ignorePatterns)) impOk = false;
+            }
+            if(!impOk) exitCode = 1;
+        }
+    }
+} else {
+    var fileList = opts.files;
+    if(#fileList == 0){
+        _logErr(_C.RED ++ "请指定要检查的文件路径" ++ _C.RST);
+        exitCode = 2;
+    } else {
+        _logInfo(_C.CYN ++ "aardio 语法检查" ++ _C.RST);
+        _logInfo(_C.DIM ++ "---" ++ _C.RST);
+        var allPassed = true;
+        for(j=1; #fileList; 1){
+            if(!checkFile(fileList[j], opts.ignorePatterns)) allPassed = false;
+        }
+        _logInfo(_C.DIM ++ "---" ++ _C.RST);
+        if(allPassed){
+            _logInfo(_C.GRN ++ "全部通过 (" ++ #fileList ++ " 个文件)" ++ _C.RST);
+        } else {
+            _logErr(_C.RED ++ "存在语法错误！" ++ _C.RST);
+            exitCode = 1;
+        }
+    }
+}
+
+// ─── JSON 输出 ───
+if(opts.json && #_jsonResults > 0){
+    import JSON;
+    var jsonStr = null;
+    try { jsonStr = JSON.stringify(_jsonResults, true); }
+    catch(e) {
+        // 序列化失败时，清理不可序列化的字段
+        for(ji=1; #_jsonResults; 1){
+            var jr = _jsonResults[ji];
+            if(jr.error) jr.error = tostring(jr.error);
+            if(jr.diffs){
+                for(dk=1; #jr.diffs; 1){
+                    if(jr.diffs[dk].old) jr.diffs[dk].old = tostring(jr.diffs[dk].old);
+                    if(jr.diffs[dk].new) jr.diffs[dk].new = tostring(jr.diffs[dk].new);
+                }
+            }
+            if(jr.output) jr.output = tostring(jr.output);
+        }
+        try { jsonStr = JSON.stringify(_jsonResults, true); }
+        catch(e2) { jsonStr = '[{"error":"JSON serialization failed"}]'; }
+    }
+    if(jsonStr) writeOut(jsonStr);
+}
+
+io.stdout.flush();
+io.stderr.flush();
+::Kernel32.ExitProcess(exitCode);

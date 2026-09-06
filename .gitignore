@@ -8,3 +8,7 @@ aiRunner.result.json
 tools/aiRunner.exe
 # lib 目录 junction（指向本机 $AARDIO\lib，每人自建，见 README 2.3；严禁提交）
 tools/lib/
+# aalint 源码收录（tools/aalint）后同样适用的惯例：编译中间产物/发布 exe/junction 不提交
+tools/aalint/.build/
+tools/aalint/dist/
+tools/aalint/lib/

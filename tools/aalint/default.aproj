@@ -1,0 +1,4 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<project ver="10" name="aalint" libEmbed="true" output="aalint.exe" ui="console" CompanyName="" FileDescription="aardio 语法检查工具" LegalCopyright="" ProductName="aalint" InternalName="aalint" FileVersion="1.0.0.111" ProductVersion="1.0.0.111" publishDir="/dist/" dstrip="false">
+	<file name="main.aardio" path="main.aardio" comment="main.aardio"/>
+</project>
