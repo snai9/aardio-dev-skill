@@ -135,6 +135,8 @@ junction 后未嵌入的库从磁盘解析（任何标准库/扩展库可用）�
 | `analyze_image` | 图像识别 | 视觉模型（如 IDE 自带的多模态能力） |
 | `capture_screenshot` | 截屏 | 让用户截，或写 aardio 脚本用 aalint 跑 `gdip.snap` |
 
+**工程自定义库文档查验**：分析含自定义库（`lib/`）与文档目录（`docs/library/`）的工程时，先 Glob `docs/library/**` 并读其中 `.aar` 文件（键=面板显示名，值=markdown 文件名；库根为隐藏 `.aar`、深层库为 `<库全名>.aar`），对照 lib 命名空间快速理解库职责；文档目录与库是可选关系——文档缺失不代表库不存在，API 语义仍以库源码底部 `/**intellisense()**/` 块为准（详见 SKILL.md 7.4 与二十五章）。
+
 ---
 
 ## 四、强制验证循环（核心行为，等效 autos 的灵魂）

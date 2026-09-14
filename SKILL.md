@@ -701,6 +701,55 @@ namespace myNs {
 }
 ```
 
+### 7.4 工程私有库目录结构与 intellisense 智能提示块
+
+工程 `lib/` 下自定义库的核心规律：**物理路径 = 命名空间 = import 三位一体**（WinRimage 五处互证：`lib/rimage/guiModel.aardio:5` namespace rimage.guiModel、`lib/rimage/preview.aardio:7`、`lib/rimage/clipboard.aardio:4`、`lib/rimage/uiValues.aardio:1`、`lib/process/rimage.aardio:7` 深层命名空间库）。
+
+库文件标准首尾结构（guiModel.aardio:5,230-231）：
+
+```aardio
+import fsys;                    // 依赖库先 import
+namespace rimage.guiModel;      // 开放命名空间（无大括号），成员直接写
+
+/*****intellisense()
+rimage.guiModel = 说明文字。
+rimage.guiModel.create() = 创建模型。
+end intellisense*****/
+
+create = function(){ ... };     // 成员直接赋值，自动进入命名空间
+
+namespace rimage.guiModel { }   // 文件末尾块状 namespace 收口
+```
+
+**两种 intellisense 包裹符**（易混）：
+- `/*****intellisense()*****/`：常规库，空参数，命名空间与物理路径同构时使用
+- `/**intellisense(库名)**/`：带参数特例，用于**非同构命名空间**的库——WinRimage 的 `lib/config.aardio:12` 用 `/**intellisense(config)**/`，因为 config 是 `fsys.config("/config/")` 的实例化对象（config.aardio:3），不是路径同构命名空间
+
+**config 库的两个特殊标记**（config.aardio:16）：
+- `? =` 任意成员名通配说明：访问任意下划线以外成员时返回同名配置文件同步表（fsys.table 对象）
+- 行尾 `!fsys_table.` 类型重定向：把成员提示指向 fsys_table 类型的提示块
+
+更多 intellisense 语法见第十七章。
+
+### 7.5 namespace 两种写法：作用域语义与工程惯例
+
+| | 开放式 `namespace X;` | 块状 `namespace X { ... }` |
+|---|---|---|
+| 语法形态 | 省略语句块标记（分号可带可不带） | 显式 `{ }` 包裹 |
+| 作用域边界 | 自声明处起直至该代码文件结束 | 仅限块内部，块结束后恢复进入前状态 |
+| 成员归属 | 声明后全文件顶层定义自动归入 | 仅块内定义归入 |
+
+（语义依据 `$AARDIO\docs\language-reference\namespace.md`：开放式见 :44-51、块状见 :21-27；命名空间内访问全局成员一律加 `..` 前缀，见 :53-62）
+
+**两种写法对"成员归入目标命名空间"功能等价**，同一工程内混用不冲突（WinRimage 六库实证）：
+- 仅开放式：`lib/process/rimage.aardio:7`（一行声明覆盖至文件末 :359）、`lib/rimage/clipboard.aardio:4`
+- 块状主体包裹：`lib/config.aardio:7-10`（块内定义常量，块状常规用法）
+- 开放式 + 末尾空块收口：`lib/rimage/guiModel.aardio:5`+`:230-231`、`lib/rimage/uiValues.aardio:1`+`:59-60`、`lib/rimage/preview.aardio:7`+`:179-181`
+
+**工程惯例**（统计口径：`$AARDIO\lib` 递归全部 .aardio 文件；行首顶层 namespace 声明、剔除注释态行；`;` 结尾或无花括号计开放式、`{` 计块状；末尾空块收口 = 块状声明位于文件末 6 行内且其后至文件尾仅空行与 `}`）：1339 个文件中开放式 1047 文件/1065 处、块状 539 文件/604 处、**末尾空块收口 0 处**——收口写法非官方惯例，属 WinRimage 作者个人风格（preview.aardio:180 注释自述意图为 IDE 导航显式化，实际作用机制待验证）。
+
+**建议**：工程库用开放式一行声明即可（与官方主流一致）；需要临时作用域隔离或嵌套声明时用块状；不必模仿末尾空块收口。库结构模板与 intellisense 写法见 7.4，智能提示语法详见第十七章。
+
 ---
 
 ## 八、常量系统
@@ -1147,6 +1196,72 @@ winform.onMinimize = function() {
     return true  // 必须 return true 取消默认最小化行为
 }
 ```
+
+### 11.7 选项卡壳层与子页面（WinRimage 模式）
+
+无边框窗体 + tabs 管理组件 + custom 容器子页面，三层分工（范本：WinRimage）：
+
+```aardio
+import win.ui.tabs;
+import win.ui.simpleWindow3;
+
+// 1) 无边框窗体只当画布，标题栏交给 simpleWindow3 自绘
+mainForm = win.form(text="WinRimage";border="none";bgcolor=0xF4F6FA)
+var chrome = win.ui.simpleWindow3(mainForm,-13,33,28,48,...)  // 接管标题栏
+chrome.titlebar.text="WinRimage"; chrome.titlebar.iconText='\uF108'
+
+// 2) 页签按钮用 plus（无颜色），页面容器用 custom（tabPanel）
+tabs = win.ui.tabs(mainForm.tabSingle, mainForm.tabBatch)  // 管理一组 plus 控件
+tabs.skin({ background={default=...;hover=...;active=...}; color={...};
+            checked={background={...};color={...};border={bottom=2;...}} })
+// 3) loadForm 注入 controller，加载子窗体文件到 custom 容器
+singlePage = tabs.loadForm(1,"/forms/single.aardio",controller)
+batchPage  = tabs.loadForm(2,"/forms/batch.aardio",controller)
+tabs.onSelChange = function(tabIndex,tabButton,formPage){ /* 切页刷新 */ }
+tabs.selIndex = 1  // 默认页
+```
+
+要点（出处 WinRimage `main.aardio:10,52-63,65`）：
+- 页签按钮必须是 plus，页面容器必须是 custom——win.ui.tabs 自动查找附近合适的 custom 控件作 panel（库源码引申证据 $AARDIO\lib\win\ui\tabs.aardio）
+- `loadForm` 默认返回**伪窗口**：延迟到首次切页/访问属性时才真正创建子窗体，启动轻量化（$AARDIO\lib\win\ui\tabs.aardio）
+- 子页面用 `dl/dt/dr/db` 锚点属性随窗体缩放（`forms/single.aardio:15-52`，如右下角按钮 `db=1;dr=1`）
+- skin 四态配色写法见 11.3；配色时机判据见 11.10
+
+### 11.8 bkplus 与 custom：与 plus 的职责分界
+
+三类控件不是三种可选方案，而是三种角色：
+
+| 类 | 角色 | 典型属性 | WinRimage 实例（main.aardio:12-18） |
+|---|---|---|---|
+| plus | 交互按钮 | `text/iconText/iconStyle/textPadding/notify/transparent` + oncommand | tabSingle/tabBatch 页签按钮 |
+| bkplus | 静态呈现 | 仅 `bgcolor/color` + 锚点，无交互 | header/tabBar 色块、logo/title 图标文本 |
+| custom | 容器占位 | 仅 `bgcolor` + 锚点，无业务属性 | tabPanel（tabs 的 panel 容器） |
+
+- 选用判据：交互态需求 → plus；静态呈现 → bkplus；子窗体/管理组件挂载 → custom
+- **防误读**：custom 不是"自定义控件"，本质是空白容器，作用是给子窗体/布局提供挂载点（win.ui.tabs 的 panel 必须是 custom——$AARDIO\lib\win\ui\tabs.aardio）
+- bkplus 照样可以显示 FontAwesome 图标文本（logo/title），只是不响应交互
+
+### 11.9 主窗体 controller 路由与子窗体契约
+
+WinRimage 的跨页协作五项契约（出处 main.aardio:25-63、forms/*.aardio）：
+
+1. **注入**：`tabs.loadForm(索引,"/forms/xxx.aardio",controller)` 第三参数把共享 controller 表传入子窗体（main.aardio:58-59）
+2. **接收**：子窗体首行 `var parent,controller = ...;`，并做缺省兜底 `controller=controller : {};`（single.aardio:13、batch.aardio:10-11）
+3. **暴露**：子窗体把主窗体要调用的方法挂回 winform——`winform.loadPath=loadPath`（single.aardio:191）、`winform.updateList=updateList`（batch.aardio:99）
+4. **跨页跳转**：batch 双击队列项 → `controller.openSingle(path)` → `singlePage.loadPath(path)` → `tabs.selIndex=1`（batch.aardio:144 → main.aardio:29-32）
+5. **判空保护**：调用暴露方法前必须判空——`if(singlePage && singlePage.loadPath) singlePage.loadPath(...)`（main.aardio:30,46,60-61,83-84）
+
+判空不是多余代码：`loadForm` 返回伪窗口，页从未被访问时其方法尚未就绪，`&&` 短路避免踩空（$AARDIO\lib\win\ui\tabs.aardio）。子窗体文件末尾 `return winform` 把窗体交还给 tabs（batch.aardio:204）。
+
+### 11.10 控件选用原则与配色时机：静态 bgcolor 与 skin 状态配色
+
+**配色时机判据**（WinRimage 实证）：
+- **颜色恒定** → DSG 里直接写 `bgcolor`：bkplus/custom（main.aardio:12/14/16）与普通 plus 按钮/面板（forms/single.aardio:17,30,32,46 全部直接写了 bgcolor/border/color）都适用
+- **颜色随交互变化** → 不写在 DSG，交给 skin 状态机制：main.aardio:15/17 的页签 plus 无任何颜色属性（main.aardio:53-57 的 tabs.skin 四态接管；不走 win.ui.tabs 时则像 single.aardio:125-128/138-141 那样在 oncommand 里手动改 background/color）
+
+**plus 页签的颜色时机**：窗体构建后、显示前的运行时初始化——main.aardio:52 创建 tabs → :53-57 立即 `tabs.skin()` 下发 default/hover/active/checked 四态样式表 → :58 loadForm → :86 show()，首帧即有配色。此后状态变色由 win.ui.tabs 内部自动完成（库源码引申证据 $AARDIO\lib\win\ui\tabs.aardio：skin 遍历 tabList 逐个下发、鼠标移动置 hover 态、切页置 checked 态）。
+
+**选用三判据**：交互态需求 → plus；静态呈现 → bkplus；容器挂载 → custom（详见 11.8）。plus 的皮肤细节见 11.3。
 
 ### 11.5 GUI 编程关键注意事项
 
@@ -3008,3 +3123,24 @@ namespace hwserver.api {
     }
 }
 ```
+
+---
+
+## 二十五、工程文档与用户库参考动态关联（文档浏览器）
+
+官方 IDE 的文档浏览器支持**动态关联工程文档与用户库参考**：打开含自定义库的工程时，库的说明文档自动出现在文档浏览器面板，无需任何注册配置。WinRimage 是该特性的应用范例（docs/ 目录）。
+
+**机制全貌四步**：目录发现 → 命名空间镜像映射 → .aar 条目挂载 → 浏览器面板呈现。
+
+1. **目录镜像律**：工程 `docs/library/` 下的子目录结构镜像 `lib/` 的命名空间——`docs/library/rimage/` ↔ 库 `rimage.*`；`docs/library/process/rimage/` ↔ 库 `process.rimage`（WinRimage Glob 全树实证）
+2. **.aar 条目挂载**：`.aar` 文件是"键=值"文本，**键=面板显示名，值=markdown 文件名**（WinRimage `docs/library/rimage/.aar` 全文仅 2 行：`快速上手=index.md`、`预览与剪贴板=preview.md`）
+3. **两级命名规律**（易混，判断依据=文件名是否等于库全名）：
+   - 库根 → **隐藏 `.aar`**（文件名为 `.aar`）：如 `docs/library/rimage/.aar`，可含多个"显示名=文件"条目
+   - 深层库 → **`<库全名>.aar`**：如 `docs/library/process/rimage/process.rimage.aar`（仅 1 行 `process.rimage = index.md`，键即库全名）
+4. **零配置**：`default.aproj` 全文无任何文档注册项，纯目录约定自动发现；且文档**可选**——WinRimage 只为 rimage 与 process.rimage 提供了文档，uiValues/clipboard/guiModel 没有也不报错
+
+**与 intellisense 块的分工**（互不替代）：
+- 库源码底部 `/*****intellisense()*****/` 块 → **API 签名级**提示，写码时生效，挂在库文件上（如 lib/process/rimage.aardio:9-21）
+- `docs/library/` 的 markdown → **文档级**说明（设计原则/用法示例），浏览时生效，挂在 docs 目录（如 docs/library/process/rimage/index.md 的"设计原则"）
+
+给 AI 的用法：分析陌生工程先 Glob `docs/library/**`，读 `.aar` 定位库文档入口，对照 lib 命名空间快速理解库职责。

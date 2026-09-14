@@ -36,6 +36,7 @@
 - `win.ui.loadingMask`（v40.31.4）、`winex.loading.thinking()`（AI 思考过程动画窗口）
 - 控件公共 `scroll` 方法（v40.45.0）；`listview.columns = [["标题1",100],["标题2",-1]]` 嵌套数组建列（v40.5.0）；`listview/win.ui.grid` 的 `getItemData/setItemData/sortColumn/autoComplete`（v40.28~40.42）
 - `com.autoComplete`（v40.35.2，edit/richedit 自动完成）；`win.enumThread`（v40.35.2）；`win.net`（v40.7.1）
+- 文档浏览器动态关联工程文档与用户库参考（版本待核实）：工程 `docs/library/` 目录镜像 lib 命名空间，按 `.aar` 文件「键=值」条目自动挂载 markdown 到文档浏览器面板，零配置（WinRimage 工程 docs/ 为应用范例）
 
 ### 网络 / 协议
 - `wsock.bt`（v40.39.0，纯 aardio 实现 DHT/metadata 客户端）、`wsock.tcp.socks5Server/Client`（v40.42）
