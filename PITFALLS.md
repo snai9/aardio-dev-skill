@@ -32,6 +32,143 @@
 
 ## 记录区（新记录追加在这一行下面）
 
+### 2026-09-15 正则贪婪 [^\r\n]* 回溯吞掉 IP 首位数字：匹配"10.17.17.2"得到"0.17.17.2"
+- 状态：已验证（实测：`"Address[^\r\n]*(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"` 对 "Address:  10.17.17.2" 提取出 "0.17.17.2"；去掉前缀改成直接 `(\d{1,3}...){4}` 后正确得到 "10.17.17.2"）
+- 场景：verifyDns 从 nslookup 输出里提取「实际使用的 DNS 服务器地址」（"名称/Name" 之前的 Address 行）
+- 现象：服务器地址 10.17.17.2 被提取成 0.17.17.2，首位 "1" 丢失；而单数位的 8.8.8.8 却正常
+- 根因：`[^\r\n]*` 是贪婪匹配，先吞掉整行再回溯；回溯时让 `(\d{1,3}...)` 从 "10" 的第 2 位 "0" 开始匹配，导致 10 被拆成 "1"+"0"，捕获组只拿到 "0.17.17.2"。首段是两位数的 IP（如 10/100/192 段）就会丢首位
+- 解决：❌ `"Address[^\r\n]*(\d{1,3}...)"` → ✅ 直接 `"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"` 匹配目标段里第一个 IPv4（该段本就只有一个服务器地址 IP）。教训：用 `.*`/`[^x]*` + 捕获组时警惕贪婪回溯，锚定词与捕获目标之间能用非贪婪 `*?` 或直接去掉锚定
+
+### 2026-09-15 线路验证假阳性：只验"域名能解析"没用，必须 nslookup 绑定目标 DNS 服务器查询
+- 状态：已验证（用户实机反馈：切财政网内网 DNS 10.17.17.2 后仍提示"新线路生效"并解析出公网域名，证明验证没走目标 DNS）
+- 场景：DNSwitch 切换线路后用 nslookup 验证新线路生效，原实现 `verifyDns(domain)` 不带 DNS 服务器参数
+- 现象：切到财政网（内网 DNS 10.17.17.2）后，验证提示"新线路生效"，还能解析出 www.caizen.com 等公网域名——但内网 DNS 本不该解析公网域名
+- 根因：`nslookup domain`（不带服务器参数）走的是**系统当前 DNS**，不是目标 DNS。切换未生效或异步未完成时，系统还在用旧/公网 DNS，照样能解析出公网域名，于是"解析出 IP 就判成功"必然假阳性。判断"新线路通了"的本质应是"目标 DNS 服务器能解析该域名"，而非"域名能被某台 DNS 解析"
+- 解决：❌ `nslookup domain`（用系统当前 DNS）→ ✅ `nslookup domain 目标DNS`（第 4 参数指定服务器），调用侧传配置的 `p.dns[[1]]`：`verifyDns(test, dnsIp)`。这样内网 DNS 解析不了公网域名时正确判失败
+- 教训：验证"切换到 X"类操作，验证动作必须**显式指向 X**，不能用"系统当前状态"间接推断——中间隔着异步应用和缓存，极易假阳性
+
+### 2026-09-15 process.popen 是独立子库，import process 不包含它
+- 状态：已验证（运行时错误「名字:'popen' 类型:null」，追加 import process.popen 后 aalint --run PASS）
+- 场景：dnsManager 库新增 verifyDns 函数，用 process.popen 捕获 nslookup 输出验证线路
+- 现象：调用 `..process.popen(...)` 报错「不支持此操作:call 定义类型:method(table) 名字:'popen' 类型:null」
+- 根因：dnsManager 顶部只有 `import process`，而 popen 是独立子库（lib/process/popen.aardio），须单独 `import process.popen` 才会在 process 命名空间注册 popen 成员。process.execute 在 process 主库本身就有，所以之前 flushDns 用 execute 一直没事，换 popen 就踩
+- 解决：❌ `import process;` 后直接用 `..process.popen` → ✅ 追加 `import process.popen;`
+
+### 2026-09-15 Windows nslookup 对不存在的域名也返回退出码 0，不能靠退出码判断解析成败
+- 状态：已验证（实测：正常域名与不存在域名 nslookup 退出码均为 0）
+- 场景：verifyDns 用 nslookup 验证切换 DNS 后的新线路是否真的生效
+- 现象：nslookup 查询成功和「域名不存在」两种场景退出码都是 0，process.popen.readAll 的第三返回值 exitCode 无法区分成败
+- 根因：Windows nslookup 对 Non-existent domain 等解析失败同样返回退出码 0（与 Unix 的 dig/host 不同）。中文系统错误输出为「*** UnKnown 找不到 xxx: Non-existent domain」，其中 "Non-existent domain" 英文固定、"找不到" 是中文
+- 解决：不判退出码，改判输出文本关键字——命中 "Non-existent domain"/"找不到"/"timed out"/"超时" 之一判失败；否则从 "名称"(中文)/"Name"(英文) 标签之后匹配 IPv4 判成功。附带坑：解析结果 IP 必须从 "名称/Name" 之后取，服务器自身的 "Address:" 在其之前，全文匹配会把 DNS 服务器 IP 误当域名解析结果
+
+### 2026-09-15 gdip.graphics 无 fillEllipseCenter，画圆用 fillCircle（圆心+半径）或 fillEllipse（左上角+宽高）
+- 状态：已验证（源码级：graphics.aardio 397/402 行确认仅有 fillEllipse、fillCircle，无 fillEllipseCenter；测试脚本 `fillCircle(edge,16,16,14.5)` 抗锯齿画圆 --run --capture PASS 返回非空 HICON）
+- 场景：DNSwitch makeIcon 从"逐像素 setPixel 手算圆距离"重构为 GDI+ 图形 API 画圆，重构建议代码写的是不存在的 `g.fillEllipseCenter(edge,16,16,29)`
+- 现象：`fillEllipseCenter` 在 gdip.graphics 库中不存在（照抄报"不支持此操作"）；且建议参数 `16,16,29` 语义是"圆心+直径"，与真实 fillEllipse 的"左上角x,y + 宽高"语义完全不符——即使把函数名抄对也会把圆画偏（从 x=16 起画，而非圆心落在 16）
+- 根因：凭"应该有个 center 版本 API"的想象写代码，未先查库源码。gdip.graphics 实际只有两个画圆 API：`fillCircle(brush,cx,cy,radius)`=圆心+半径；`fillEllipse(brush,x1,y1,width,height)`=左上角+宽高（与 GDI+ 原生 FillEllipse 同语义）
+- 解决：❌ `g.fillEllipseCenter(edge,16,16,29)` → ✅ `g.fillCircle(edge,16,16,14.5)`（半径=直径/2 别漏套，29→14.5）。画圆优先 fillCircle 语义最直观，免去 fillEllipse 手动换算左上角
+
+### 2026-09-15 aardio 相邻字符串字面量静默并置，ASCII 引号写错不报错但变量不被拼接
+- 状态：已验证（实测对比：`"配置"" ++ name ++ ""格式错误"` 输出 `配置" ++ name ++ "格式错误`，name 变量没被插入；全角引号版 `"配置“" ++ name ++ "”格式错误"` 正确输出 `配置“XX”格式错误`）
+- 场景：DNSwitch 注释版 dnsManager_注释.aardio 的 validateProfiles 五处错误消息，本意是用全角引号包变量名（`配置“XX”格式错误`），写成了 ASCII 引号 `"配置"" ++ name ++ ""格式错误"`
+- 现象：语法完全合法（aalint PASS），运行也不报错，但 ` ++ name ++ ` 整段成了字面文本，变量丢失——错误消息变成 `配置" ++ name ++ "格式错误`，纯静默逻辑错误
+- 根因：aardio 支持相邻字符串字面量并置（juxtaposition），`"a""b"` 等价 `"ab"`。ASCII 双引号收尾后又紧跟下一个引号开新串，解析器当并置处理，不产生任何错误
+- 解决：想在消息里用引号包变量名必须用全角引号 `“”`，绝不能用 ASCII 引号。全项目扫描 `"[^"]*""` 模式排查同类
+- 附：这类"注释版与源码代码不一致"的漂移，用剥注释逐行 diff 才能发现（正则去 `//`、`/*...*/` 注释后对比非空行），肉眼 review 不可靠
+
+### 2026-09-15 双引号字符串内的 \r\n 不转义，msgbox 字面显示 "DNS:\r\n"
+- 状态：已验证（用户实机截图实锤 + 修复后 aalint 通过）
+- 场景：DNSwitch showStatus 拼接状态文本 `msg ++= "DNS:\r\n" ++ dnsStr`，双击托盘图标弹状态框
+- 现象：对话框显示字面 `DNS:\r\n10.19.240.240`，换行符成了可见的 4 个字符
+- 根因：aardio 双引号是原样字符串，`\r\n` 保持字面字符不解释为换行（与 2026-08-22 引号终结条目同根：双引号内反斜杠不转义）
+- 解决：❌ `"DNS:\r\n"` → ✅ `"DNS:" ++ '\r\n'`（单引号才是转义字符串）。全文件搜双引号内的 `\r\n`/`\n`/`\t` 逐个排查
+- 教训：修完一处后用户复查又发现同款（重置确认框 `"确定要重置为默认配置吗？\r\n当前..."`）——此类坑必须全项目正则扫描（`"[^"]*\\[^"]*"`）逐处判断，不能只修报错那一行
+
+### 2026-09-15 process.execute 启动控制台程序拿不到 hProcess，executeWait 返回 false 但进程已执行成功
+- 状态：已验证（ipconfig /displaydns 输出对比：刷新前 63218 字节 → process.execute 异步刷新后 31579 字节，缓存确实清了）
+- 场景：dnsManager.flushDns 用 `process.execute("ipconfig","/flushdns","open",0)` 静默刷新 DNS 缓存，测试时 executeWait 同参数返回 false，一度怀疑命令没执行
+- 现象：`executeWait("ipconfig","/flushdns","open",0)` 返回 false；但 displaydns 前后对比证明缓存已被刷新
+- 根因：process.execute 内部 ShellExecuteEx 虽带 SEE_MASK_NOCLOSEPROCESS，但"控制台程序 + _SW_HIDE"场景不返回 hProcess；execute 源码 `if(!shInfo.hProcess){ return !wait; }` → wait 模式恒返回 false。返回值不表示执行成败
+- 解决：判断这类命令是否生效别看返回值，看实际效果（displaydns 前后对比）。产品代码用 process.execute 异步触发即可；ipconfig 类瞬时命令不需要等待
+
+### 2026-09-15 滑入动画视觉无感：小位移+easeOutCubic+短时长 = 闪现
+- 状态：已验证（帧级日志：250ms 10 帧，t=0.25 已完成 58% 位移，71px 总位移前 100ms 走完 88%）
+- 场景：DNSwitch 通知窗口滑入用"上移 71px + 淡入"250ms，用户反馈"滑入没加效果"；同窗口的滑出（尺寸收缩）却被认可"效果不错"
+- 根因：动画代码实际在跑，但 easeOutCubic 前段极快 + 71px 位移对人眼太小，视觉上等于闪现。尺寸变化（0→100%）的感知强度远超小位移平移
+- 解决：滑入改成与滑出对称的右下角尺寸展开（1x1 → 全尺寸，easeOutCubic 300ms + 淡入），帧级验证 12 帧从 51x15 展开到 341x101。UI 动画要"可见的变化量"：优先做尺寸/透明度全范围变化，别做小位移平移
+
+### 2026-09-15 win.dlg.argbColor.choose() 内部引用未定义变量 p，传初始色必崩
+- 状态：已验证（源码级：lib 全目录 grep 确认 win.dlg 命名空间无 p 定义；运行报错现象为上次会话实测，本次上下文丢失未留错误原文）
+- 场景：DNSwitch 编辑配置对话框用 win.dlg.argbColor 弹取色器，`choose(初始色)` 一调用就报错
+- 现象：传非 null 初始色调用 choose() 直接崩溃（p 未定义）；不传参数则不崩（`if(clr!==null)` 挡住了那行）
+- 根因：`lib\win\dlg\argbColor.aardio` 的 choose 方法第 1 行写的是 `p.setColor(clr,gdi)`，但 argbColor 类和 win.dlg 命名空间里根本没有 p 变量（应为 `this.setColor`）——aardio 官方库 bug
+- 解决：两条路：① 避开 choose()，用底层接口自己组合 `setColor(initial)` + `doModal(frm)` + 读 `lastSelectedColor`；② 直接换 `win.dlg.color`（系统标准取色器，出入参是 GDI 的 BGR 格式，需手动 ARGB↔COLORREF 字节互换）。DNSwitch 最终采用 ②
+- 附：`win.dlg.color` 的 `choose(clr)` 源码干净无此问题，入参返回值都是 COLORREF(0xBBGGRR)，取消返回 null
+
+### 2026-09-15 DHCP"自动获取 DNS"无法靠 DNS 地址判断，必须读注册表 NameServer
+- 状态：已验证（aalint --run 真机测试通过）
+- 场景：DNSwitch 托盘工具按 DNS 地址匹配当前配置。用户手动在系统里把网卡改为"自动获取 DNS"后，菜单仍勾选旧配置"财政网"，状态对话框显示"未识别"
+- 现象：`Win32_NetworkAdapterConfiguration.DNSServerSearchOrder`（及 `inet.adapterInfo` 的 DNS 枚举）在 DHCP 模式下返回的是 **DHCP 服务器分配的实际 DNS 地址**（非空），与静态配置的地址无法区分"模式"；DHCP 配置项的 dns 是空数组，地址比较必然失败
+- 根因：DNS 地址只反映"生效的地址"，不反映"获取方式（自动/静态）"。模式的权威记录在注册表 `HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{网卡GUID}\NameServer`：空/不存在=自动获取，非空=静态。网卡 GUID 就是 `inet.adapterInfo` 的 `adapterName` 字段（带大括号）
+- 解决：新增 `isAutoDnsMode(adapterName)` 用 `win.reg(key, true)`（openExisting，键不存在返回 null 不误建）读 NameServer 判空；`matchCurrentProfile` 先判模式——自动模式直接返回 isDhcp 配置，静态模式才走地址匹配。顺带发现：`matchProfile({}, profiles)` 空数组会匹配到空 dns 的 DHCP 配置（长度相等且拼接串都是 ""），这是原设计行为，测试预期别写反
+
+### 2026-09-15 aardio 双引号字符串内嵌中文引号，误用 ASCII 引号会提前终止字符串
+- 状态：已验证（aalint 语法检查捕获）
+- 场景：main_注释.aardio 窗体控件 text 属性中提示文案 `text="可直接输入，也可点击"选择颜色"使用取色器"`
+- 现象：aalint 报错 `预期'}' 匹配到'{' 错误:'选择颜色'`——"选择颜色"周围的 ASCII 双引号把 verbatim 字符串提前截断
+- 根因：aardio 双引号字符串是原样字符串，内部无法用 `\"` 转义；要表达"字符串里含引号"必须用全角引号 `“”` 或改用单引号转义字符串
+- 解决：❌ `text="点击"选择颜色"取色器"` → ✅ `text="点击“选择颜色”取色器"`。教训：复制含引号的中文文案进 aardio 字符串时，先把 ASCII 引号替换成全角引号
+
+### 2026-09-15 embed=true 的 res 资源编译后不能用 io.fullpath("/res/...") 读磁盘
+- 状态：已验证（aalint --run 冒烟测试 + 源码阅读确认）
+- 场景：DNSwitch 项目用 `io.fullpath("/res/default.ico")` 取图标路径传给 `win.util.tray(winform, 路径, tip)` 创建托盘
+- 现象：F5 开发模式正常；F7 编译后运行 EXE 启动即报错：
+  `{File}: dist\lib\win\image.aardio {Line}:#162 {Calling}:'convert' {Bad argument}:@1 {Expected}:Invalid POINTER! {Got}:'null'`
+- 根因：aproj 里 res 目录是 `embed="true" local="false"`——文件内嵌进 EXE、**不释放到磁盘**。编译后 `io.fullpath("/res/xxx.ico")` 解析为 `dist\res\xxx.ico`（不存在）；`win.image.createIcon` 内部 `string.load(路径)` 返回 null，`raw.convert(null, IconHeader())` 直接崩。F5 正常是因为开发模式 `/` 指向项目目录，res 文件真实存在
+- 解决：❌ 运行时读磁盘资源文件 `win.util.tray(winform, io.fullpath("/res/default.ico"), tip)` → ✅ 托盘 icon 参数传 `null`（用窗体默认图标占位），随后 `tray.setIcon(makeIcon动态生成的HICON, true)` 替换；res 里的 ico 仅保留给 aproj 的 exe 图标属性（编译期读取，运行时不需要）。教训：`embed="true" local="false"` 的目录 = 编译后磁盘上没有，运行时只能靠代码内嵌（`$"/res/x.ico"`）或改 `local="true"` 释放到磁盘，两者别混
+
+### 2026-09-14 # 运算符对字符串键表永远返回 0
+- 状态：已验证（aalint 实测确认）
+- 场景：dnsManager.initConfig 中用 `#profiles == 0` 判断配置表是否为空
+- 现象：`profiles` 含 3 个字符串键配置项，但 `#profiles` 返回 0，导致每次启动都覆盖用户自定义配置
+- 根因：aardio 的 `#` 运算符只计算表的数组部分长度，字符串键属于哈希部分不计入
+- 解决：❌ `if(#profiles == 0)` → ✅ 用迭代判断：`var hasAny = false; for(k,v in profiles){ hasAny = true; break; } if(!hasAny)`
+
+### 2026-09-14 gdi.rgbReverse 返回 BGR 整数，不能直接用于亮度比较
+- 状态：已验证
+- 场景：setColorPreview 中用 `gdi.rgbReverse(argb) < 0x808080` 判断深浅色
+- 现象：BGR 值高低字节顺序反转，直接和阈值比较结果错误（如蓝色 0xE5881E > 0x808080 被判为浅色）
+- 根因：rgbReverse 返回 BGR 格式整数，R/B 字节互换后数值大小变化不可控
+- 解决：❌ `gdi.rgbReverse(argb) < 0x808080` → ✅ 提取 RGB 分量算亮度：`var r,g,b = (argb>>16)&0xFF,(argb>>8)&0xFF,argb&0xFF; (r*299+g*587+b*114) < 145000`
+
+### 2026-09-13 winform 没有 addMessageFilter 方法
+- 状态：已验证
+- 场景：托盘程序想捕获托盘回调消息，想当然用了 addMessageFilter
+- 现象：错误原文「不支持此操作:call 定义类型:method(table) 名字:'addMessageFilter' 类型:null」
+- 根因：aardio win.ui 窗体没有 addMessageFilter 方法，是凭其他语言经验瞎猜的
+- 解决：❌ mainForm.addMessageFilter(...) → ✅ 用 mainForm.onTrayMessage 表结构，键为消息 ID，值为回调函数
+- 正确用法参考 examples\Windows\TrayIcon\tray.aardio：
+  ```
+  winform.onTrayMessage = {
+      [0x205/*_WM_RBUTTONUP*/] = function(wParam){ ... };
+      [0x203/*_WM_LBUTTONDBLCLK*/] = function(wParam){ ... };
+  }
+  ```
+
+### 2026-09-13 namespace 内引用全局对象需要 .. 前缀
+- 状态：已验证
+- 场景：dnsManager 库文件内使用 io、string、table、com 等报错
+- 现象：错误原文「不支持此操作: _get table 定义类型:self(namespace) 名字:'xxx' 类型:null」
+- 根因：namespace 内的名字查找链不到全局表，所有全局对象（io/string/table/com/JSON/inet 等）都需要 .. 前缀
+- 解决：❌ namespace 内直接用 io.exist() / string.find() → ✅ 用 ..io.exist() / ..string.find()
+
+### 2026-09-13 table.join 不存在，应使用 string.join
+- 状态：已验证
+- 场景：测试 DNS 获取脚本时，想把数组合并成字符串
+- 现象：错误原文「不支持此操作:call 定义类型:method(table) 名字:'join'」
+- 根因：aardio 中没有 table.join，数组拼接字符串用 string.join
+- 解决：❌ table.join(arr, ", ") → ✅ string.join(arr, ", ")
+
 ### 2026-08-23 验证工具切换决策：aiRunner → aalint（主），aiRunner 降级备用
 - 状态：已验证（aalint v2.4.0 实测 10 场景：编译检查/陷阱 lint（str-plus、assign-in-cond、try-return 均命中）/执行捕获/`--eval`/`--api gdip.bitmap`/`--imports`/`--fix --dry-run`/`--run-isolated` 死循环隔离终止/`--ui-smoke` PASS/`--json`）
 - 场景：用户发现 `E:\aardio\project\aalint` 项目并提问"是否比 aiRunner 更好、要不要换"
@@ -223,3 +360,69 @@
 - 现象：命令行参数正常（MSYS 自动转换），但脚本内写死 `/c/Windows/Temp/...` 的 string.save 失败
 - 根因：Git Bash 会自动转换**命令行参数**里的 POSIX 路径，但不会转换**文件内容**里的路径
 - 解决：aardio 代码内路径一律用 `C:/xxx` 形式（Windows 认正斜杠）；跨环境传参时注意转换只发生在参数层
+### 2026-09-17 nslookup 无响应服务器耗时机制与 -retry 参数实测（当日两次修订）
+- 场景：DNSwitch 的 verifyDns 用 `nslookup -timeout=2` 做线路验证，用户反馈"不可达的 DNS 要 6 秒才报错，可达的 DNS 查不存在域名秒级报错"
+- 现象：内网 DNS 不可达（UDP 静默丢包，无响应也无 ICMP 错误）时，验证失败弹窗要等约 4-6 秒；而服务器可达时对 NXDOMAIN 域名秒级失败
+- 根因：nslookup 默认共 2 次尝试（1 初始 + 1 次重试），每次尝试等满 timeout——总耗时 ≈ timeout × 2 + 进程开销。"有回应的失败"（NXDOMAIN 秒回）与"无回应的失败"（硬等超时）的耗时差是网络层行为差异，不是代码 bug
+- 修订【2026-09-17 晚】：~~"默认 retry=2 共 3 次尝试"~~ **误判修正**：aalint --run 沙箱实测计时的真实结论——`nslookup -timeout=2` 默认 10.1s、`-retry=1` 10.1s（**与默认完全相同**）、`-retry=0` 0.11s（立即失败）、`-retry=2` 20.2s、`-timeout=1` 5.2s。即：**命令行 -retry 参数有效，默认重试就是 1 次（共 2 次尝试）**；`-retry=1` 与默认等价（无害但也无增益，保留它只是显式表达意图）。"3 次尝试"来自 bash 沙箱 stderr 错误行计数的误判——bash 沙箱对 53 端口是"立即拒绝"模式（nslookup 瞬时失败仅 1s），其打印次数和时序完全失真不可信；aalint --run 沙箱才是"静默丢包等满超时"模式可用于时序测量
+- 教训：**同一台机器上不同沙箱（bash 直跑 vs aalint --run）对网络拦截行为不同**，测网络时序必须先确认沙箱模式（看耗时要不要 4s+）；跨沙箱的"尝试次数计数"和"绝对耗时"都不能作为结论依据
+- 解决：验证耗时的真正优化靠**外层重试**——verifyDns 对超时类失败（timed out/超时/No response from server）自动重跑一轮（容忍网络抖动/慢递归，如 8.8.8.8 冷缓存解析冷门域名首次递归超时被误判），NXDOMAIN 等确定性失败不重试；代价是真死服务器报错从约 4-5 秒变约 8-10 秒（实测 20312ms = 2 轮各 10.1s）
+### 2026-09-17 nslookup 无响应时真实耗时 ≈ timeout×2.5（用户实测证实，"沙箱开销"说法修正）
+- 场景：DNSwitch 加外层超时重试后，用户真实环境实测：主备 DNS 都不通 **40 秒**才报错、主不通备通 **20 秒**提示切换成功
+- 结论：**每轮 nslookup（-timeout=2，默认 2 次尝试）无响应时真实耗时 ≈ 10 秒**——用户真实网络与 aalint --run 沙箱实测（10.1s/轮）完全一致。上一条记录里"沙箱开销略高于真实网络"的说法**错误**，10.1s 就是 nslookup 真实行为，不是沙箱开销
+- 根因：10 秒 = timeout×2 的理论值（4 秒）+ 额外 6 秒，来自 (1) nslookup 启动时对**系统当前 DNS** 做反向预查询（显示"默认服务器"用），当前线路不通时预查询也吃满超时窗口；(2) 重试等待**指数退避**（2s→4s）而非固定间隔。理论值 2×timeout 严重低估
+- 线性关系验证：-timeout=1 实测 5.2s/轮（沙箱），与 timeout=2 的 10.1s 精确成比例；timeout=1 + 外层重试后单台死服务器 2 轮实测 10313ms
+- 解决：**-timeout=2 → 1**（dnsManager.aardio verifyDns）——内网 DNS RTT<10ms、国内公共 DNS<100ms，1 秒窗口足够；极端慢递归由外层重试兜底（重试时服务器侧缓存已热）。预期用户环境：两台全死 40s→约 20s、主死备活 20s→约 10s
+- 教训：**估时不要用"次数×timeout"理论值**，nslookup 有预查询和指数退避两重隐藏开销，实际 ≈ timeout×2.5/轮；沙箱测得的绝对值如果与理论严重偏离，先怀疑理论模型而不是沙箱
+### 2026-09-17 for-in 循环变量在闭包中的绑定：每轮独立（JS 经验者的反向误判点）
+- 场景：DNSwitch 状态面板循环创建"切换"按钮，每个按钮回调需捕获自己的 profileName
+- 易误判点：JS 中 `for` + `var` + 闭包是经典坑（全部捕获最后一轮的值），aardio 语法相近易先入为主
+- 实测结论：**aardio 的 for-in 循环变量每轮迭代都是独立的局部变量绑定**，闭包捕获各自轮次的值（`{"a";"b";"c"}` 三闭包分别返回 a/b/c，aalint --run 实测），不存在 JS var 的共享问题
+- 建议写法：循环体内仍显式 `var nm = name;` 再闭包捕获 nm——行为上冗余，但让"每轮独立"的意图显式化，读者不必再查证语言规则
+- 相关：同步阻塞主线程期间（如 process.popen.readAll 等待 nslookup），**所有**基于消息循环的 UI 动画/定时器（setInterval/setTimeout/reduce 闪烁）都冻结——"耗时操作的进行中反馈"在同步架构下无法实现，要么接受无反馈，要么上工作线程
+
+### 2026-09-18 libEmbed（不是 dstrip）才是控制 dist\lib 目录是否生成的开关
+- 状态：未验证（aalint 编译 PASS，待用户 F7 实测确认 dist\lib 不再生成且 EXE 正常运行）
+- 场景：DNSwitch 项目编译后 EXE 旁边总有个 lib 目录，用户不想要。project_memory 旧条目写"dstrip=false to retain lib directory with runtime dependencies"，一度以为是 dstrip 控制
+- 现象：aproj 里 `libEmbed="false"` 时，F7 会把工程 import 的库以 .aardio 文件形式释放到 dist\lib\，EXE 运行时从磁盘加载；改成 `libEmbed="true"` 后库字节码嵌入 EXE 资源，dist\lib 不再生成
+- 根因：查 `E:\aardio\docs\guide\ide\file.md` 确认——`libEmbed` 控制 lib 是否嵌入 EXE；`dstrip` 只控制是否剥离调试符号（影响错误信息是否带文件名行号），与 lib 目录是否生成**无关**。project_memory 那条"dstrip=false to retain lib directory"是误记，真正控制 lib 目录的是 libEmbed
+- 解决：❌ 以为改 dstrip 能去掉 lib 目录 → ✅ 改 `libEmbed="true"`（dstrip 保持 false 以保调试信息）。前提：项目 import 的全是纯 aardio 库（无原生 DLL），本项目（com.wmi/inet.adapterInfo/JSON/fsys/win.reg/process/process.popen/gdip/win.ui 等）满足
+- 教训：project_memory 的"lessons learned"也可能误记根因；改工程属性前先查官方文档确认属性语义，别盲信记忆
+
+### 2026-09-18 WM_KILLFOCUS 的 wParam 是"获得焦点的窗口句柄"，可据此区分关闭来源
+- 状态：未验证（代码 aalint PASS，待用户实机确认面板 toggle 行为正确）
+- 场景：DNSwitch 左键托盘弹出面板（popup 窗体），面板 wndproc 监听 WM_KILLFOCUS 实现"点击外部自动关闭"。但左键再次单击托盘想 toggle 关闭时，托盘点击先激活主窗体 → 面板 KILLFOCUS → 面板自动关闭 + panelForm=null → 接着 showPanel 看到 panelForm=null 又开新面板，toggle 破损变成"闪一下重开"
+- 根因：WM_KILLFOCUS 的 wParam 是**获得焦点**的窗口 HWND（不是失去焦点的）。托盘点击激活主窗体时，wParam == mainForm.hwnd；点击其他应用时 wParam 是别的窗口
+- 解决：KILLFOCUS 处理里加 `if(wParam == mainForm.hwnd) return;`（跳过关闭，交给左键 handler 的 toggle 逻辑处理）；左键 handler 在 showPanel 前先 `win.setForeground(mainForm.hwnd, true)` 确保主窗体获得焦点从而触发 KILLFOCUS 带 mainForm.hwnd
+- 教训：Win32 消息的 wParam 含义因消息而异，写 wndproc 前查消息文档确认 wParam 语义；"点击外部关闭"与"点击托盘 toggle"的冲突本质是焦点转移时序，用 wParam 区分焦点去向可解
+
+### 2026-09-18 同步阻塞前的 UI 动画用 win.delay 让消息泵跑完进场再阻塞
+- 状态：未验证（代码 aalint PASS，待用户实机确认验证期间通知可见）
+- 场景：DNSwitch 切换带验证时 verifyDns 同步阻塞主线程 5-15 秒，期间所有 setInterval/setTimeout 冻结。想给用户"正在验证"文字提示，但 showNotice 后立即调 verifyDns 会让通知卡在 1x1 进场动画帧上（消息泵没机会跑完 300ms 进场）
+- 根因：showNotice 的进场动画靠 setInterval(16ms) 驱动，需主线程消息泵分发定时器消息；verifyDns 同步调用瞬间阻塞泵，动画停在第 0 帧
+- 解决：showNotice 后插一行 `win.delay(350);`——win.delay 内部 pump 消息（源码 `E:\aardio\lib\win\_.aardio:690` 确认），让进场动画跑完到全尺寸/满透明，再进入 verifyDns 阻塞；阻塞期间通知冻结在"停留"帧（全尺寸可见），验证结束后 showNotice(结果) 替换。350ms = 进场 300ms + 余量
+- 教训：同步阻塞前的 UI 反馈要给消息泵留时间跑完动画进场；win.delay 是 aardio 里"带消息泵的 Sleep"，GUI 主线程用它替代 sleep。注意 win.delay 嵌套超 10 层会降级为 peekPumpMessage（源码守卫），常规用法无碍
+
+
+### 2026-09-18 不透明 static 控件铺满整行会拦截按钮点击（z-order 不可靠）
+- 状态：已验证（用户实机反馈"不能用"，删除 bg static 后按钮恢复响应）
+- 场景：DNSwitch 左键面板用 `ctl["bg"++i] = {cls="static";left=0;top=y;right=w;bottom=y+rowH;bgcolor=...}` 给当前行铺淡色背景底，按钮在 z=4、bg 在 z=1，预期按钮在 bg 之上可点击
+- 现象：当前行的"当前"按钮本来就该 disabled 不影响，但其他行的 bg 不存在所以正常；实际问题出在——实际测试整个面板按钮都无法响应（用户反馈"不能用"）
+- 根因：aardio 的 static 控件设了 bgcolor（不透明，无 transparent=1）后，即使 z-order 低于按钮，仍会拦截鼠标点击。Win32 的子窗口 z-order 不保证 hit-test 严格按 z 排序——static 先创建先命中，按钮后创建反而在 static 之下。z 参数在 frm.add(表) 批量添加时不保证生效为真正的 WS_ZORDER
+- 解决：❌ 用铺满整行的 static 做行背景底 → ✅ 改用不覆盖按钮区域的左侧 3px 色条（left=0 right=4，按钮在 left=w-70 互不重叠）；或改用窗体 onPaint 自绘背景。教训：aardio 里不要让 static 控件与 button 等交互控件的区域重叠，即使 z 值不同也不安全
+
+
+### 2026-09-18 popup 窗体里 button.oncommand 不可靠——改用 WM_LBUTTONDOWN 坐标命中
+- 状态：已验证（用户多次反馈"切换按钮点击无效"，换 3 种 button 写法均不通；改用窗体级 WM_LBUTTONDOWN 后立即可用）
+- 场景：DNSwitch 左键面板用 `win.form(mode="popup";topmost=1)` 创建弹窗，行用 `cls="button"` + `frm["row"++i].oncommand = function(id,event){...}` 绑定点击切换
+- 现象：button.oncommand 回调不触发，点击无反应。试过：单按钮整行、z 显式排序、frm.add(表) vs 逐个 addControl——均无效
+- 根因：推测 aardio 的 popup 模式窗体对 button 控件的 WM_COMMAND 路由有缺陷，或 frm.add(表) 批量创建时控件 ID/oncommand 绑定不生效。未深入追源码
+- 解决：❌ `cls="button"` + oncommand → ✅ 行用 `cls="static";transparent=1`（点击穿透到窗体），窗体 wndproc 拦截 `0x201/*_WM_LBUTTONDOWN*/`，从 lParam 高 16 位取 Y 坐标，`math.floor((y-topH)/rowH)+1` 算出行号，按 names 数组索引切换。彻底绕开 button 控件
+- 教训：aardio popup 窗体里需要可点击区域时，不要依赖 button.oncommand；用 static+transparent+窗体 wndproc 坐标命中更可靠
+
+### 2026-09-18 enableDpiScaling 后设计像素 ≠ 实际像素，坐标命中必须读控件实际位置
+- 状态：已验证（用户反馈点击行号错位：点测试行却切换到电子政务网）
+- 场景：DNSwitch 左键面板用 `frm.enableDpiScaling("init")` 启用 DPI 缩放，行高 topH=118/rowH=34 是设计像素，WM_LBUTTONDOWN 的 lParam 是实际像素
+- 现象：150% DPI 下实际行高=51px，用设计常量 `(yPos-118)/34` 算出的行号比实际大 1~2，点击第 1 行命中第 2~3 行的配置，后面的行点不动（算出的行号超出 #names 范围）
+- 解决：❌ 硬编码 `topH`/`rowH` 做坐标计算 → ✅ `frm.add(ctl)` 后用 `frm["lab"++i].top` / `.bottom` 读取 DPI 缩放后的实际像素位置，存入 `rowTops`/`rowBottoms` 数组，点击时遍历命中。彻底绕开设计像素与实际像素的换算
+- 教训：aardio 启用 DPI 缩放后，所有坐标命中逻辑必须用控件的 `.top/.bottom/.left/.right` 实际值，不能硬编码设计常量
