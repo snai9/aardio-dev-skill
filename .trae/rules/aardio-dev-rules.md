@@ -1,9 +1,18 @@
 ---
-name: "aardio-dev-rules"
-description: "aardio 开发行为约束与用户偏好。当编写 aardio 代码、与用户交互、执行开发任务时必须遵守。"
+AIGC:
+  ContentProducer: '001191110102MAD55U9H0F10002'
+  ContentPropagator: '001191110102MAD55U9H0F10002'
+  Label: '1'
+  ProduceID: '507ff2cc-550d-4efb-8bf6-78b57f40731f'
+  PropagateID: '507ff2cc-550d-4efb-8bf6-78b57f40731f'
+  ReservedCode1: 'ed0123cd-86b6-4fcd-b4c2-bacb7d2469af'
+  ReservedCode2: 'ed0123cd-86b6-4fcd-b4c2-bacb7d2469af'
 ---
 
 # aardio 开发规则
+
+> 本仓库已按 Trae 规范重组：规则在 `.trae/rules/`，技能在 `.trae/skills/`，入口在根目录 `AGENTS.md`。
+> 文中引用的旧文件名已映射到新位置：`SKILL.md` → 已按章节拆分为 `.trae/skills/` 下 6 个技能（`aardio-lang` 语言核心 / `aardio-stdlib` 标准库 / `aardio-gui` GUI与Web / `aardio-sys` 系统并发网络 / `aardio-tooling` 工具链方法论 / `aardio-traps` 常见陷阱）；`SKILL.md` 陷阱章节 → `aardio-traps` 技能。完整映射见根目录 `AGENTS.md`。
 
 ## 一、用户偏好
 
@@ -20,7 +29,7 @@ description: "aardio 开发行为约束与用户偏好。当编写 aardio 代码
 - **不确定的 API 用法，先查库源码或范例验证，不凭其他语言经验推断**
 - 关键假设必须用最小代码验证后再实施
 - 遇到报错先读错误信息，定位到具体行号，再查库源码确认 API 签名
-- 发现新陷阱必须立即记录到 PITFALLS.md
+- 发现新陷阱必须立即记录到 .trae/skills/aardio-traps/resources/pitfalls.md
 
 ### 2.0.2 编译检查作为安全网
 
@@ -238,7 +247,7 @@ description: "aardio 开发行为约束与用户偏好。当编写 aardio 代码
 
 - 简洁总结已完成内容、验证证据、剩余风险与建议下一步
 - 若任务仍很长，可给出可恢复的 checkpoint / State Summary
-- 记录重要信息到 SKILL.md 或项目记忆
+- 记录重要信息到 aardio-traps 技能坑库（`.trae/skills/aardio-traps/resources/pitfalls.md`）或项目记忆
 
 ### 5.7 迭代原则
 
@@ -249,7 +258,7 @@ description: "aardio 开发行为约束与用户偏好。当编写 aardio 代码
 > 提炼自 aardio 作者经验：加密思考（思考链不可见）的模型做复杂任务必然翻车——思考过程不进上下文，后续步骤拿不到前面结论。解法是强制在**回复正文**输出状态检查点。
 
 - 复杂多步任务中，**每完成一个阶段必须在回复正文输出状态检查点**：已完成里程碑、关键决策及理由、已结论事项、下一步计划
-- 作用：上下文压缩/会话中断/关掉重开后，凭最后一条检查点 + PITFALLS.md 即可原地恢复接力，进度不丢
+- 作用：上下文压缩/会话中断/关掉重开后，凭最后一条检查点 + .trae/skills/aardio-traps/resources/pitfalls.md 即可原地恢复接力，进度不丢
 - 需要用户强制模型执行时，可在提示词末尾追加以下**固定约束（原文，勿改动）**：
 
 ```
@@ -319,7 +328,7 @@ else {
 
 - 写完代码后必须验证，不能假设代码正确
 - 不确定 API 用法时，先查库源码或范例，不靠猜测
-- 发现新陷阱必须立即记录到 PITFALLS.md
+- 发现新陷阱必须立即记录到 .trae/skills/aardio-traps/resources/pitfalls.md
 
 ### 7.2 测试框架
 
@@ -337,7 +346,7 @@ else {
 
 - 遇到报错先读错误信息，定位到具体行号
 - 查库源码确认 API 签名，不凭其他语言经验推断
-- 解决问题后记录到 SKILL.md 的陷阱章节
+- 解决问题后记录到 `.trae/skills/aardio-traps/SKILL.md` 的陷阱章节
 - 对于常见错误模式，总结并添加到规则中
 
 ### 7.5 代码审查清单
@@ -370,34 +379,34 @@ else {
 
 ## 九、代码执行与验证（第三方 IDE 工作流，等效 autos loadcodex）
 
-> 详见 `WORKFLOW.md`。本节为强制规则。
+> 详见 `.trae/rules/workflow.md`。本节为强制规则。
 
 ### 9.1 aalint 验证工具（主）与 aiRunner（备）
 
-- **主工具 aalint**：`$AARDIO\aalint.exe`（与 aardio.exe 同目录，能找到全部标准库）。源码收录在本仓库 `tools/aalint/`（安装/更新/重编译流程见 WORKFLOW 二、八）；用法速查：`aalint --ai-guide`
-- **备用工具 aiRunner**：仓库 `tools/aiRunner.exe`。仅当 aalint 缺失/损坏时临时使用（用法见 WORKFLOW 2.4）
-- **发现新陷阱必须回写**：SKILL.md 的陷阱章节就是长期记忆，踩新坑立即回写
+- **主工具 aalint**：`$AARDIO\aalint.exe`（与 aardio.exe 同目录，能找到全部标准库）。源码收录在本仓库 `tools/aalint/`（安装/更新/重编译流程见 `.trae/rules/workflow.md` 二、八）；用法速查：`aalint --ai-guide`
+- **备用工具 aiRunner**：仓库 `tools/aiRunner.exe`。仅当 aalint 缺失/损坏时临时使用（用法见 `.trae/rules/workflow.md` 2.4）
+- **发现新陷阱必须回写**：`.trae/skills/aardio-traps/`（SKILL.md 陷阱章节 + resources/pitfalls.md 坑库）就是长期记忆，踩新坑立即回写
 
 ### 9.2 强制验证闭环
 
 - **写入或修改任何 `.aardio` 文件前，必须先 `aalint <file>` 编译检查**（等效 autos：编译通过才写入）
 - **写完逻辑代码必须执行验证**：`aalint --run --capture --timeout 10 <file>`，用 `print`/`return` 观察关键值，禁止"写完就交"；机器可读结果加 `--json`（以退出码为准）
 - **不确定 API 行为时**：`aalint --eval "表达式"` 快速验证，或 `aalint --api 库名` 查签名，或 `aalint --imports <file>` 验证依赖
-- **使用库 API 前对照 `CHANGELOG-KNOWLEDGE.md` 废弃迁移表**，禁止使用官方已废弃的旧写法（web.sciter/string.toUnicode/table.isArray 等）；不确定新旧时以该文件为准或查官方更新日志
+- **使用库 API 前对照 `.trae/skills/aardio-stdlib/resources/changelog-knowledge.md` 废弃迁移表**，禁止使用官方已废弃的旧写法（web.sciter/string.toUnicode/table.isArray 等）；不确定新旧时以该文件为准或查官方更新日志
 - **交付前跑陷阱检查**：`aalint --lint <file>`（12 条 aardio 专属规则），警告必须逐条确认或修复
 - **崩溃/卡死/后台线程/HTTP 服务代码用 `aalint --run-isolated`**（子进程隔离，崩溃不影响验证）；普通代码的兜底超时由 `--timeout` 提供（aiRunner 时代依赖 bash timeout 的做法可弃用）
 - 测试代码只用 `print(...)` 和 `return` 回传，**禁止 `console.log`**
 - 编译/运行错误必须**基于错误信息（含行号）修复**，禁止盲改；语法类错误可 `aalint --fix --dry-run <file>` 预览自动修复（确认 diff 后再去掉 --dry-run）
 - **GUI/图像验证优先读取程序内部状态**（`return 状态变量`、`getPixel` 像素断言）；视觉模型识别结果是辅助证据不是结论，据其反推代码 bug 前必须先用内部状态交叉验证（幻觉防护，详见 WORKFLOW 第四章）
-- 新踩的坑必须**立即**追加到 `PITFALLS.md`（唯一坑库，追加式，含错误原文/根因/❌✅对比，格式见该文件）——这是最高优先级规则之一，详见第十章
+- 新踩的坑必须**立即**追加到 `.trae/skills/aardio-traps/resources/pitfalls.md`（唯一坑库，追加式，含错误原文/根因/❌✅对比，格式见该文件）——这是最高优先级规则之一，详见第十章
 
 ## 十、踩坑记录（强制，最高优先级之一）
 
-> `PITFALLS.md` 是本仓库的长期记忆，等效官方助手的 write_memory。用户在练手学 aardio，每个坑都是未来的生产力。
+> `.trae/skills/aardio-traps/resources/pitfalls.md` 是本仓库的长期记忆，等效官方助手的 write_memory。用户在练手学 aardio，每个坑都是未来的生产力。
 
 ### 10.1 必须记录——两阶段（缺一即违规）
 
-**阶段一（踩坑瞬间，立即）**：遇到下列情形，立即向 `PITFALLS.md` 记录区顶部追加**草稿条目**：只记现象 + 错误信息原文 + 当前假设，标注 `状态：未验证`。目的：锚定防遗忘，禁止"等解决了再记"（会漏记）：
+**阶段一（踩坑瞬间，立即）**：遇到下列情形，立即向 `.trae/skills/aardio-traps/resources/pitfalls.md` 记录区顶部追加**草稿条目**：只记现象 + 错误信息原文 + 当前假设，标注 `状态：未验证`。目的：锚定防遗忘，禁止"等解决了再记"（会漏记）：
 
 - 遇到任何编译错误 / 运行时错误
 - 发现任何反直觉行为（如引号规则、颜色格式、线程语义）
@@ -412,14 +421,14 @@ else {
 
 ### 10.2 必须先查
 
-- 遇到报错或不确定用法时，**先搜 PITFALLS.md**（含未验证草稿——别人未解的坑可能正是你现在的坑），再搜 SKILL.md 陷阱章节
+- 遇到报错或不确定用法时，**先搜 .trae/skills/aardio-traps/resources/pitfalls.md**（含未验证草稿——别人未解的坑可能正是你现在的坑），再搜 `.trae/skills/aardio-traps/SKILL.md` 陷阱章节
 - 重复踩已记录的坑属于违规
 - 采纳任何 PITFALLS 条目前看一眼状态：未验证条目是线索不是结论
 
 ### 10.3 会话收尾自查
 
-- 交付总结前检查：本次会话踩过的坑是否全部已录入 PITFALLS.md；**不得遗留"未验证"草稿**——要么完成验证升级，要么明确标注"本会话未能验证"及原因
-- 录入的坑若与 SKILL.md 已有条目重复，仍录入（标注"与 SKILL.md 26.x 同类"即可）
+- 交付总结前检查：本次会话踩过的坑是否全部已录入 .trae/skills/aardio-traps/resources/pitfalls.md；**不得遗留"未验证"草稿**——要么完成验证升级，要么明确标注"本会话未能验证"及原因
+- 录入的坑若与 aardio-traps 技能已有条目重复，仍录入（标注"与 aardio-traps 技能 26.x 同类"即可）
 
 ## 十一、禁止事项
 
@@ -443,5 +452,7 @@ else {
 - ❌ 凭猜测使用 API，不查库源码验证
 - ❌ 写入 .aardio 文件前不做编译检查
 - ❌ 在不确定库是否存在时直接 import（先查 `lib/` 目录确认）
-- ❌ 修复报错/发现反直觉行为后不立即记录到 PITFALLS.md（强制）
-- ❌ 遇到报错不先查 PITFALLS.md，重复踩已记录的坑
+- ❌ 修复报错/发现反直觉行为后不立即记录到 .trae/skills/aardio-traps/resources/pitfalls.md（强制）
+- ❌ 遇到报错不先查 .trae/skills/aardio-traps/resources/pitfalls.md，重复踩已记录的坑
+
+> AI生成

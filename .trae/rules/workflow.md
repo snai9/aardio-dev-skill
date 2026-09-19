@@ -1,8 +1,21 @@
+---
+AIGC:
+  ContentProducer: '001191110102MAD55U9H0F10002'
+  ContentPropagator: '001191110102MAD55U9H0F10002'
+  Label: '1'
+  ProduceID: '8f39cf45-dd85-4179-94ef-45ba4a085bf8'
+  PropagateID: '8f39cf45-dd85-4179-94ef-45ba4a085bf8'
+  ReservedCode1: 'be278aa0-72bf-4b36-806e-02b584c3cc25'
+  ReservedCode2: 'be278aa0-72bf-4b36-806e-02b584c3cc25'
+---
+
 # 第三方 IDE 复刻 aardio 官方 AI 助手（autos）能力的工作流
 
 > 本文是对 aardio 官方 AI 智能体（autos，源码位于 `$AARDIO\examples\AI\autos.aardio`）剖析后的结论与落地方案。
 > 目标：在任意第三方 IDE（ZCode / Claude Code / Cursor 等）中，借助本仓库达到与官方助手接近的开发效果。
-> `$AARDIO` 指 aardio 安装目录，按 SKILL.md 开头的探测规则确定（`AARDIO_HOME` 环境变量 → 常见路径 → 询问用户），**勿写死路径**。
+> `$AARDIO` 指 aardio 安装目录，按 `.trae/skills/aardio-lang/SKILL.md` 开头的探测规则确定（`AARDIO_HOME` 环境变量 → 常见路径 → 询问用户），**勿写死路径**。
+>
+> 本仓库已按 Trae 规范重组：规则在 `.trae/rules/`，技能在 `.trae/skills/`，入口在根目录 `AGENTS.md`。文中 `SKILL.md` 已按章节拆分为 `.trae/skills/` 下 6 个技能（`aardio-lang` / `aardio-stdlib` / `aardio-gui` / `aardio-sys` / `aardio-tooling` / `aardio-traps`），章节→技能映射见根目录 `AGENTS.md`。
 
 ---
 
@@ -20,7 +33,7 @@
 | 6 | **交错思考 + 断点续传** | 中止/出错后保存思维链状态，可"继续/重试"；故障 15 秒→5 分钟指数退避自动重试。 |
 | 7 | **长期记忆** | `~memory/main.md` 主记忆跨会话加载，大坑教训沉淀。 |
 
-第三方 IDE 里 1、3 完全可以等效复刻（见下文）；2、4、5、7 已提炼进本仓库 RULES.md / SKILL.md；6 是客户端实现与代码生成无关。
+第三方 IDE 里 1、3 完全可以等效复刻（见下文）；2、4、5、7 已提炼进本仓库 .trae/rules/aardio-dev-rules.md 与 .trae/skills/ 六个技能；6 是客户端实现与代码生成无关。
 
 ---
 
@@ -130,12 +143,12 @@ junction 后未嵌入的库从磁盘解析（任何标准库/扩展库可用）�
 | `http_get` / `download_file` | 网络请求 | Bash curl / WebFetch |
 | `search_web` | 联网搜索 | WebSearch |
 | `github_get_content` 等 | GitHub | gh CLI / WebFetch |
-| `write_memory` / `read_memory` | 长期记忆 | **PITFALLS.md 坑库（主）+ SKILL.md 陷阱章节（沉淀）**：踩新坑立即记录、写码前先查 |
+| `write_memory` / `read_memory` | 长期记忆 | **.trae/skills/aardio-traps/resources/pitfalls.md 坑库（主）+ .trae/skills/aardio-traps/SKILL.md 陷阱章节（沉淀）**：踩新坑立即记录、写码前先查 |
 | `load_skill` | 技能包 | 参照 `$AARDIO\lib\autos\skills\` 内置技能（excel/pdf/word/chromiumWebDriver 等）的用法文档 |
 | `analyze_image` | 图像识别 | 视觉模型（如 IDE 自带的多模态能力） |
 | `capture_screenshot` | 截屏 | 让用户截，或写 aardio 脚本用 aalint 跑 `gdip.snap` |
 
-**工程自定义库文档查验**：分析含自定义库（`lib/`）与文档目录（`docs/library/`）的工程时，先 Glob `docs/library/**` 并读其中 `.aar` 文件（键=面板显示名，值=markdown 文件名；库根为隐藏 `.aar`、深层库为 `<库全名>.aar`），对照 lib 命名空间快速理解库职责；文档目录与库是可选关系——文档缺失不代表库不存在，API 语义仍以库源码底部 `/**intellisense()**/` 块为准（详见 SKILL.md 7.4 与二十五章）。
+**工程自定义库文档查验**：分析含自定义库（`lib/`）与文档目录（`docs/library/`）的工程时，先 Glob `docs/library/**` 并读其中 `.aar` 文件（键=面板显示名，值=markdown 文件名；库根为隐藏 `.aar`、深层库为 `<库全名>.aar`），对照 lib 命名空间快速理解库职责；文档目录与库是可选关系——文档缺失不代表库不存在，API 语义仍以库源码底部 `/**intellisense()**/` 块为准（详见 .trae/skills/aardio-lang/SKILL.md 7.4 与 .trae/skills/aardio-tooling/SKILL.md 二十五章）。
 
 ---
 
@@ -150,7 +163,7 @@ junction 后未嵌入的库从磁盘解析（任何标准库/扩展库可用）�
 4. 编译检查 → `aalint <file>`，失败则修复后重查（语法类可 `aalint --fix --dry-run` 预览）
 5. 执行验证 → `aalint --run --capture --timeout 10 <file>`，用 print/return 观察关键值
 6. 修复 → 基于真实错误信息（含行号）修复，不要盲改
-7. 交付（Deliver）→ 总结已验证内容 + 剩余风险；新踩的坑立即记录到 PITFALLS.md（强制）
+7. 交付（Deliver）→ 总结已验证内容 + 剩余风险；新踩的坑立即记录到 .trae/skills/aardio-traps/resources/pitfalls.md（强制）
 ```
 
 ### 单元测试写法（等效 autos 的 util.testRunner 场景）
@@ -187,10 +200,10 @@ return $.report();
 2. **不要过早生成完整代码**：先小步验证关键路径，最后才产出成品
 3. **GUI 测试优先无头方式**：无界面、非阻塞验证算法；模拟鼠标键盘/截图识别是低效反模式
 4. **复杂任务流程**：Align → Plan → De-risk → Implement → Validate → Deliver，迭代执行
-5. **场景→库路由**：什么场景用什么库（详见 SKILL.md 第十章路由表）
+5. **场景→库路由**：什么场景用什么库（详见 .trae/skills/aardio-stdlib/SKILL.md 第十章路由表）
 6. **库文档三类**：库参考（intellisense）/ 库指南（`~/docs/library-guide`）/ 库文档（`~/docs/library`）
 
-系统提示词**原文**完整备份在 `AUTOS-PROMPT.md`，作为行为准则与同步 diff 的基准。
+系统提示词**原文**完整备份在 `.trae/skills/aardio-tooling/resources/autos-prompt.md`，作为行为准则与同步 diff 的基准。
 
 ---
 
@@ -202,24 +215,24 @@ aardio 官方助手更新很快（autos.aardio、lib/autos/ 都会随 IDE 更新
 
 | 文件 | 内容 | 对应本仓库 |
 |---|---|---|
-| `examples\AI\autos.aardio` | 主程序 + **系统提示词**（`resetMessages()` 内 `systemPrompt` 块） | `AUTOS-PROMPT.md` |
-| `lib\autos\tools\schemas.aardio` | 全部工具的 JSON Schema 与描述（优先级标签） | SKILL.md 第二十章工具表、WORKFLOW.md 第三章映射表 |
+| `examples\AI\autos.aardio` | 主程序 + **系统提示词**（`resetMessages()` 内 `systemPrompt` 块） | `.trae/skills/aardio-tooling/resources/autos-prompt.md` |
+| `lib\autos\tools\schemas.aardio` | 全部工具的 JSON Schema 与描述（优先级标签） | .trae/skills/aardio-tooling/SKILL.md 第二十章工具表、.trae/rules/workflow.md 第三章映射表 |
 | `lib\autos\tools\handlers.aardio` | 工具实现（loadcodex 语义、文件补丁等） | aalint / tools/aiRunner 的行为参考 |
 | `lib\autos\skills\` | 内置技能包（excel/pdf/word/chromiumWebDriver…） | 按需在开发对应场景时现场查阅，不必搬运 |
 
 ### 6.2 同步步骤（建议每次 aardio IDE 大版本更新后做一次）
 
-1. **diff 系统提示词**：提取 autos.aardio 中 `systemPrompt` 块与 `AUTOS-PROMPT.md` 对比；措辞变化通常比新增更重要（官方在持续调教措辞）
-2. **同步官方更新日志**（新增，高价值）：抓取 https://ide.update.aardio.com/log/ 中自上次同步以来的条目，按三类过滤（新增库/函数、废弃与迁移、行为变更）追加/更新 `CHANGELOG-KNOWLEDGE.md`；噪音条目（改进范例/文档/AI 助手）忽略。**废弃迁移表是写码前必查项**——防止生成官方已废弃的"考古代码"（web.sciter→web.view、string.toUnicode→string.toUtf16、table.isArray→table.isArrayLike 等）
-3. **diff 工具列表**：对比 schemas.aardio 中出现的新工具名与 SKILL.md 第二十章表格；新工具→在 WORKFLOW.md 第三章映射表补一行"第三方等效动作"
-4. **陷阱回写**：日常开发中验证工具报错踩到的新坑，立即追加到 PITFALLS.md（这就是活的长期记忆，强制）
+1. **diff 系统提示词**：提取 autos.aardio 中 `systemPrompt` 块与 `.trae/skills/aardio-tooling/resources/autos-prompt.md` 对比；措辞变化通常比新增更重要（官方在持续调教措辞）
+2. **同步官方更新日志**（新增，高价值）：抓取 https://ide.update.aardio.com/log/ 中自上次同步以来的条目，按三类过滤（新增库/函数、废弃与迁移、行为变更）追加/更新 `.trae/skills/aardio-stdlib/resources/changelog-knowledge.md`；噪音条目（改进范例/文档/AI 助手）忽略。**废弃迁移表是写码前必查项**——防止生成官方已废弃的"考古代码"（web.sciter→web.view、string.toUnicode→string.toUtf16、table.isArray→table.isArrayLike 等）。其中需要补入技能 SKILL.md 的系统性知识，按根目录 `AGENTS.md` 技能清单判断落点（GUI 能力→`aardio-gui`，标准库→`aardio-stdlib`，陷阱→`aardio-traps`，工具链→`aardio-tooling` 等）
+3. **diff 工具列表**：对比 schemas.aardio 中出现的新工具名与 .trae/skills/aardio-tooling/SKILL.md 第二十章表格；新工具→在 .trae/rules/workflow.md 第三章映射表补一行"第三方等效动作"
+4. **陷阱回写**：日常开发中验证工具报错踩到的新坑，立即追加到 .trae/skills/aardio-traps/resources/pitfalls.md（这就是活的长期记忆，强制）
 5. **验证工具链兼容性**：aardio 大版本更新后重编译 aalint（F7）并跑一遍核心场景（编译检查/执行捕获/lint/api/fix）确认正常
 
 ### 6.3 原则
 
 - **不求全量搬运，只同步"影响代码生成质量"的部分**：提示词措辞 > 工具路由 > 新库新 API > 其他
 - 官方文档/源码**不分发**：本仓库只放提炼结论与原文引用位置（`$AARDIO` 在用户本机），遵守官方文档版权声明
-- 同步时让 AI 执行即可："请按 WORKFLOW.md 第六章同步机制，对比本机 autos 源码更新本仓库"
+- 同步时让 AI 执行即可："请按 .trae/rules/workflow.md 第六章同步机制，对比本机 autos 源码更新本仓库"
 
 ---
 
@@ -227,12 +240,12 @@ aardio 官方助手更新很快（autos.aardio、lib/autos/ 都会随 IDE 更新
 
 | 层 | 文件 | 记什么 | 谁更新 |
 |---|---|---|---|
-| 实战坑库 | 本仓库 `PITFALLS.md` | **用户项目中真实踩的坑**（错误原文、根因、❌/✅、场景），AI 写码前必查 | AI 会话（两阶段强制规则，见 RULES 十） |
+| 实战坑库 | 本仓库 `.trae/skills/aardio-traps/resources/pitfalls.md` | **用户项目中真实踩的坑**（错误原文、根因、❌/✅、场景），AI 写码前必查 | AI 会话（两阶段强制规则，见 .trae/rules/aardio-dev-rules.md 第十章） |
 | 通用教科书 | aalint 自带 `tools/aalint/docs/aardio-syntax-traps.md` | **语言级通用语法陷阱**（约 40 主题，提炼自官方文档），是 aalint `--lint` 规则的候选清单 | **只读不写**——它是 aalint 项目的出厂文档，虽随源码收录在本仓库，也不纳入本仓库文档体系 |
 | 机器执行 | `aalint --lint`（12 条规则） | 能静态检测的陷阱直接工具抓，不依赖记录 | 随 aalint 版本更新 |
-| 沉淀层 | 本仓库 `SKILL.md` 陷阱章节 | 稳定复用的语言/库知识体系 | AI 会话（可选，从 PITFALLS 归纳） |
+| 沉淀层 | 本仓库 `.trae/skills/aardio-traps/SKILL.md` 陷阱章节 | 稳定复用的语言/库知识体系 | AI 会话（可选，从 pitfalls.md 坑库归纳） |
 
-**铁律**：踩坑记录**只进 PITFALLS.md**，禁止写进 aalint 的 traps 文档（那是 aalint 项目的出厂说明书）；发现 lint 漏报某类陷阱，记 PITFALLS.md 即可，不改 aalint 源码。
+**铁律**：踩坑记录**只进 .trae/skills/aardio-traps/resources/pitfalls.md**，禁止写进 aalint 的 traps 文档（那是 aalint 项目的出厂说明书）；发现 lint 漏报某类陷阱，记 .trae/skills/aardio-traps/resources/pitfalls.md 即可，不改 aalint 源码。
 
 ---
 
@@ -244,6 +257,8 @@ aalint 与 aiRunner 一样是独立项目，源码特意收录在本仓库 `tool
 2. 把 `tools/aalint/dist/aalint.exe`（及新版 `aalint-ai-guide.md`）拷贝到 `$AARDIO\`（与 aardio.exe 同目录）
 3. **把更新后的源码与文档同步提交进 `tools/aalint/`**（`.build/`、`dist/`、`lib/` 已在 .gitignore 忽略，不会误提交）
 4. 建议顺手跑一遍核心场景回归（编译检查/`--run --capture`/`--lint`/`--eval`）确认新版本正常
-5. 唯一还需要动仓库其他文件的情况：新版本**改了命令行接口**（参数改名/删除）→ 让 AI 对照 `aalint --ai-guide` diff WORKFLOW 2.2 速查表；`--lint` **新增规则** → 无需额外动作（AI 自动受益），可在 PITFALLS.md 记一条"aalint x.x 新增 xx 规则"
+5. 唯一还需要动仓库其他文件的情况：新版本**改了命令行接口**（参数改名/删除）→ 让 AI 对照 `aalint --ai-guide` diff `.trae/rules/workflow.md` 2.2 速查表；`--lint` **新增规则** → 无需额外动作（AI 自动受益），可在 .trae/skills/aardio-traps/resources/pitfalls.md 记一条"aalint x.x 新增 xx 规则"
 
 aiRunner（仓库内置备用执行器）同理：它是本仓库自己的代码，仓库更新它随仓库走，与 aalint 互不影响。
+
+> AI生成

@@ -1,3 +1,14 @@
+---
+AIGC:
+  ContentProducer: '001191110102MAD55U9H0F10002'
+  ContentPropagator: '001191110102MAD55U9H0F10002'
+  Label: '1'
+  ProduceID: 'c6facf27-a407-4265-b87e-9f8c345ef322'
+  PropagateID: 'c6facf27-a407-4265-b87e-9f8c345ef322'
+  ReservedCode1: '4d625685-971d-4678-b22f-ece8f0aa3f7c'
+  ReservedCode2: '4d625685-971d-4678-b22f-ece8f0aa3f7c'
+---
+
 # aardio 更新日志知识库（提炼层）
 
 > 来源：官方更新日志 https://ide.update.aardio.com/log/
@@ -5,7 +16,7 @@
 > ① 新增库/函数（含更优新解法）② 废弃与迁移（防止写"考古代码"）③ 行为/语法变更
 > 噪音条目（"改进范例/文档/AI 助手"）不记。
 > 官方"只维护最新版本"，本文件按主题组织、随官方更新滚动维护。
-> 同步时机：每次 aardio IDE 更新后（并入 WORKFLOW 第六章同步机制）。
+> 同步时机：每次 aardio IDE 更新后（并入 `.trae/rules/workflow.md` 第六章同步机制）。
 
 ---
 
@@ -25,7 +36,7 @@
 | `string.database` | `string.csv` | v37.20.0 | string.database 移入扩展库仅兼容 |
 | `fsys.time` 的 `getByNamespace` 系 | （见上 table.get 条目） | v40.34.0 | — |
 | `bencoding` | `bencode`（标准库） | v40.38.1 | 原 bencoding 移入扩展库 |
-| plus 控件自绘事件 `onDrawContent`/`onDrawForegroundEnd`/`onDrawEnd` | `onDrawForeground` / `onDrawComplete` | v42.38.2 | 旧事件名废弃（SKILL.md 26.4 已记） |
+| plus 控件自绘事件 `onDrawContent`/`onDrawForegroundEnd`/`onDrawEnd` | `onDrawForeground` / `onDrawComplete` | v42.38.2 | 旧事件名废弃（aardio-traps 技能 26.4 已记） |
 | `winform.onInitDialog` | `winform.ready` | v42.53.0 | onInitDialog 重定向到 ready |
 
 ## 新增库/函数精选（能用新解法就用）
@@ -99,3 +110,5 @@
 3. **遇到诡异解析问题**：查「行为/语法变更」表确认是不是版本差异
 4. 本文件与官方日志冲突时以官方日志为准，并提醒用户更新本文件
 5. 同步方法：更新 aardio 后，把日志里自上次同步版本以来的条目按三类过滤追加（AI 可执行："请按 WORKFLOW 第六章同步本文件"）
+
+> AI生成

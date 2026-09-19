@@ -1,12 +1,23 @@
+---
+AIGC:
+  ContentProducer: '001191110102MAD55U9H0F10002'
+  ContentPropagator: '001191110102MAD55U9H0F10002'
+  Label: '1'
+  ProduceID: '534732bc-42f9-49e4-a7e0-758dc9ef8756'
+  PropagateID: '534732bc-42f9-49e4-a7e0-758dc9ef8756'
+  ReservedCode1: 'a6b7d51b-fd5e-40e1-bb4f-5dd1273106d1'
+  ReservedCode2: 'a6b7d51b-fd5e-40e1-bb4f-5dd1273106d1'
+---
+
 # aardio 官方 AI 助手（autos）系统提示词原文
 
 > 提取自 `$AARDIO\examples\AI\autos.aardio` 中 `resetMessages()` 函数内的 `systemPrompt`（`/******...******/` 块）。
 > **为什么单独保留原文**：官方助手的效果很大一部分来自这段提示词的措辞（角色、反模式警告、GUI 测试方法论、场景路由）。
-> 提炼版已并入本仓库 RULES.md / SKILL.md / WORKFLOW.md；本文件是原文备份，供对照与后续同步官方更新时 diff 用。
+> 提炼版已并入本仓库 `.trae/rules/` 与 `.trae/skills/` 六个技能；本文件是原文备份，供对照与后续同步官方更新时 diff 用。
 >
 > 注意： autos 运行时还会在此提示词后动态拼接一段「背景」（当前日期、系统版本、工作区路径、进程权限等）和「长期记忆」（main.md 内容），
 > 这些是运行时信息，第三方 IDE 中由 AI 环境自带，无需仿制。
-> 使用本仓库开发 aardio 项目时，**本文件内容视为已生效的行为准则**（与 RULES.md 同级，冲突时以 RULES.md 为准）。
+> 使用本仓库开发 aardio 项目时，**本文件内容视为已生效的行为准则**（与 `.trae/rules/aardio-dev-rules.md` 同级，冲突时以该规则文件为准）。
 
 ---
 
@@ -256,4 +267,6 @@ autos 在上述原文之后还会追加：
 2. **长期记忆说明**：`~memory/` 记忆文件系统规则——main.md 为主记忆、写入时机与频率控制、超 40KB 修剪、switch_memory 切换、复杂任务分而治之靠记忆接力
 3. **主记忆内容**：main.md 文件全文
 
-第三方 IDE 等效：第 1 项由 AI 环境自带；第 2、3 项等效为本仓库 SKILL.md 陷阱章节 + 项目内的 AGENTS.md / CLAUDE.md 等项目记忆文件。
+第三方 IDE 等效：第 1 项由 AI 环境自带；第 2、3 项等效为本仓库 aardio-traps 技能（SKILL.md 陷阱章节 + resources/pitfalls.md 坑库）+ 项目内的 AGENTS.md / CLAUDE.md 等项目记忆文件。
+
+> AI生成
