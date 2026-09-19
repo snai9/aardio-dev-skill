@@ -3,10 +3,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: 'f5b21acb-0106-4d71-aa92-9185c2365405'
-  PropagateID: 'f5b21acb-0106-4d71-aa92-9185c2365405'
-  ReservedCode1: '9a375a60-e01f-424b-8c61-afdff5c504a7'
-  ReservedCode2: '9a375a60-e01f-424b-8c61-afdff5c504a7'
+  ProduceID: 'ad7846c3-252a-438c-845a-75344873ff9a'
+  PropagateID: 'ad7846c3-252a-438c-845a-75344873ff9a'
+  ReservedCode1: 'e6e19209-fcec-4355-901e-ef5ea09dfb47'
+  ReservedCode2: 'e6e19209-fcec-4355-901e-ef5ea09dfb47'
 ---
 
 # aardio 踩坑记录（PITFALLS）
@@ -43,6 +43,58 @@ AIGC:
 ---
 
 ## 记录区（新记录追加在这一行下面）
+
+### 2026-09-19 批量编辑声称成功但部分编辑静默丢失：用户实测暴露"按钮无事件、保存丢参数"，剥注释 diff 再次立功
+- 状态：已验证（用户实测排序无效 → 排查发现两处编辑未落盘 → 补齐后剥注释 diff 双文件 IDENTICAL + 编译 PASS）
+- 场景：DNSwitch 排序功能用 multiedit 一次提交 7 个编辑（工具返回成功），同步注释版同理。用户实机反馈：↑↓ 点击无反应、保存后顺序不变
+- 现象：源码版 main.aardio 缺 moveItem 函数与 btnUp/btnDown 事件绑定（按钮存在但无 oncommand），saveProfiles 漏传 names 参数；且 initConfig 调用行未接 namesOrder（全局变量从未定义）——但编译 PASS（语法层完全合法）、grep 局部检查时其余 5 处编辑都在，掩盖了缺失
+- 根因：批量编辑工具返回成功 ≠ 所有编辑都落盘（7 个编辑丢了 2 个，无任何报错）；而编译检查只能验语法，"控件没绑事件""函数没传参"这类静默缺失编译层完全无感
+- 解决：①批量编辑后立即 grep 全部新引入的关键符号（函数名/事件名/参数）确认落盘；②源码版与注释版的同步状态用**剥注释逐行 diff**验证（正则去 // 与 /*...*/ 后对比非空行）——本次又抓出 dnsManager_注释 滞后两批历史改动（IPv6 过滤修复、readAll→waitOne 改造从未同步过注释版）；③用户实测反馈"某功能完全没反应"时，优先怀疑代码根本没到位，其次才是逻辑 bug
+- 教训：编译 PASS + 局部 grep 通过 ≠ 编辑完整落盘；"注释版与源码逐行等价"必须靠 diff 工具保证，肉眼或抽查不可靠（本坑第二次验证这一点）
+
+### 2026-09-19 aardio 表 + JSON 全链路不保键序：要持久化顺序必须另存纯数组
+- 状态：已验证（aalint --run 实测四组数据；13 项排序功能测试全 PASS 后落地）
+- 场景：DNSwitch 加配置排序功能——用户在编辑对话框用 ↑↓ 调整配置顺序后需持久化，重启后切换面板按此顺序显示
+- 实测数据：
+  - 序列化：按 banana/apple/cherry/中文键 顺序插入，JSON.stringify 输出与插入序无关（近似字典序/哈希序）
+  - 解析：'{"zebra":1,"yak":2,"xray":3}' 解析后 for 遍历得 yak,zebra,xray——与 JSON 文本顺序**无关**
+  - 按"想要顺序"重建表再序列化：仍不保序
+  - 混合表 {profiles={哈希}; order={纯数组}} 序列化正常，**纯数组严格保序**（order[[1]]/[[3]] 端到端一致）
+- 根因：aardio 字符串键哈希表的 for 遍历顺序由内部哈希决定（非插入序非字典序）；JSON.stringify 按遍历序输出、JSON.parse 按文本序插入但遍历序依旧由哈希决定——插入顺序在"表→JSON 文本→表"整条链路上都不保留
+- 解决：需要持久化顺序的数据，在对象旁另存一个 order 纯数组（JSON 数组严格保序），加载以 order 为准；order 必须做容错——跳过已失效键（删除后残留）、order 未覆盖的键按字典序追加末尾（新增）、order 为 null 回退字典序（兼容旧文件）
+- 附 1：listbox 控件在 aalint/脚本环境同样需要显式 import win.ui.ctrl.listbox（同 ipaddress 三连坑的坑 1，凡 OPT_IMPORT 块内的控件类皆如此）
+- 附 2：listbox.selIndex 可读写（1 基），**程序赋值不触发 onSelChange**（实测 fired=false），"刷新列表后手动 loadFields"模式不会双重提交
+- 附 3：中文键的 table.sort 是码点升序（电 30005 < 自 33258 < 财 36130），写测试断言别按拼音序预期
+
+### 2026-09-19 过程通知的生命周期短于同步操作耗时：waitOne 泵消息让"正在验证"气泡提前自动消失（用户实测：政务网验证 1/2 不可见直接出 2/2）
+- 状态：已验证（根因是确定性时序推演 + waitOne 泵消息机制有源码注释佐证；修复后编译 PASS，视觉行为待用户实机复测确认）
+- 场景：DNSwitch 切换带验证时，验证循环对每个 DNS 依次 showNotice("正在验证 x/2...") → verifyDns 同步等待。用户实机反馈：切财政网能看到 1/2→2/2 连续过程，切政务网 1/2 永远不可见、每次直接出 2/2
+- 根因：两个机制叠加——① showNotice 生命周期固定 2.8 秒（进场 300ms + 停留 2200ms + 滑出 320ms 后自动 close）；② verifyDns 用的 process.popen.waitOne 是**消息感知等待**（泵消息），验证期间通知动画照常运转跑完全生命周期后自关。政务网第一个 DNS（10.19.240.240 内网地址）在切换前网络下不可达，nslookup 约 5 秒/轮 × 超时重试 = 10 秒+，通知 2.8 秒就没了 → 中间 7 秒空白 → 用户只看到 2/2。财政网"正常"是假象：其第一个 DNS 对测试域名是秒级 NXDOMAIN 失败，通知还在可见窗口内就被替换，掩盖了同一缺陷
+- 解决：❌ 过程通知用常规 showNotice（固定 2.8 秒自动消失）→ ✅ showNotice 加第 4 参数 stay=true 进入常驻模式（stayMs=0，stay 阶段判断 `stayMs > 0 &&` 才转 out），通知保持可见直到被下一次 showNotice 替换；结果类通知（成功/失败）不传 stay 保持原自动消失行为
+- 教训：①"消息感知等待"是把双刃剑——它让 UI 不冻结的同时也让 UI 自动行为（定时器、动画生命周期）照常推进，任何"操作还没完但 UI 元素自己消失了"的现象优先查这条；②耗时不可预测的同步操作，其过程反馈必须显式常驻，不能用固定时长的自动消失通知；③"某场景正常某场景异常"时对比两场景的**耗时特征**（快速失败 vs 慢速超时）往往直接指向根因
+
+### 2026-09-19 `:` 元字符坑的潜伏实例：getActiveAdapter 的 IPv6 过滤完全失效（应用案例）
+- 状态：已验证（aalint --run 真机实测：过滤失效时 adapterInfo.dns 输出 fe80::1%20；修复后输出纯 IPv4 且与 WMI 数据一致）
+- 场景：DNSwitch 项目审查时做数据源一致性测试——getActiveAdapter（inet.adapterInfo 枚举）与 getCurrentDns（WMI DNSServerSearchOrder）对比，发现前者混入 IPv6 地址 fe80::1%20，后者纯 IPv4
+- 现象：`if(!..string.find(strAddr, ":"))` 本意"不含冒号即 IPv4"，但 fe80::1%20 照样进了列表，过滤形同虚设
+- 根因：2026-08-22 已记的 `:` 元字符坑（匹配任意**多字节**字符）在此项目老代码里潜伏未爆——关键细节：多字节 = 非 ASCII。IPv6 地址（fe80::1%20）与 IPv4 地址全是 ASCII 字符，`":"` 对两者都匹配不到，find 恒返回 null，`!null = true`，**所有地址都被放行**。这个写法的失效是静默的：功能看起来"正常"（IPv4 大多数场景能用），直到两个数据源对比才暴露
+- 解决：❌ 排除式 `!string.find(s, ":")`（语义错误且静默失效）→ ✅ 正向匹配 IPv4 格式 `string.match(s, "^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")`，只收 IPv4，任何非 IPv4 格式（IPv6/空值/垃圾）天然不匹配，语义即文档。教训：过滤"不是 X"的排除式写法，如果判断依据是模式匹配，极易因元字符语义偏差静默失效；能改成"是 X"的正向匹配就改
+- 关联：本次同款修了 dnsManager 两处（getActiveAdapter/getCurrentDns），顺带使 adpt.dns 与 getCurrentDns 数据一致，省掉 updateTrayStatus 每轮一次的冗余 WMI 查询
+
+### 2026-09-19 ipaddress 控件三连坑：import 不自动加载、判空要用 address、清空要 address=null
+- 状态：已验证（aalint --run 实测：text 赋值/读回/address 换算/disabled/清空全通过）
+- 场景：DNSwitch 编辑配置对话框把 DNS 输入从 edit 换成 ipaddress 控件（参考 examples\Windows\Controls\ipAddress.aardio）
+- 坑1：`import win.ui` 后 `cls="ipaddress"` 创建控件**静默失败**——add 不报错，但 frm.ip 为 null，首次属性赋值才报「不支持此操作: _set table 名字:'ip' 类型:null」。win.ui.ctrl 主库 OPT_IMPORT 块虽列有 ipaddress，但 aalint/脚本环境不自动展开；官方示例能跑是 IDE 设计器维护了 import。解决：显式 `import win.ui.ctrl.ipaddress;`
+- 坑2：控件清空后 `.text` 返回 **"0.0.0.0"** 而非空串（SysIPAddress32 未填字段按 0 显示），用 `#text` 判断"是否填了 DNS"会把空控件误判为填了 0.0.0.0。解决：判空/有无值用 `.address != 0`（address 是 32 位 IP 数值，全空为 0）
+- 坑3：清空控件不能 `.text = ""`，用 `.address = null`（源码：null 发 IPM_CLEARADDRESS）
+- 附：`.text` 可直接赋 "10.19.240.240" 读写；`.disabled` 可读写；`.address` 数值格式首段在最高字节（10.19.240.240 = 0x0A13F0F0）
+
+### 2026-09-19 aalint --run 输出含 U+2194（↔）等特殊 Unicode 字符时截断
+- 状态：已验证（两次复现：print 里含 ↔ 时该行及后续输出全部丢失，但脚本正常执行返回值完整）
+- 场景：集成测试 print("ARGB↔COLORREF 往返: PASS")
+- 现象：输出到 "ARGB" 就停了，后续所有 print 内容丢失，看起来像脚本中断
+- 根因：aalint 控制台输出管道对该字符编码处理异常，输出流断掉
+- 解决：测试脚本 print 避免使用 ↔、≥ 等非常用 Unicode 字符，用 ASCII 替代（<->、>=）。注意：截断只是显示问题，脚本执行与返回值不受影响，别把"输出截断"误判为"执行中断"
 
 ### 2026-09-15 正则贪婪 [^\r\n]* 回溯吞掉 IP 首位数字：匹配"10.17.17.2"得到"0.17.17.2"
 - 状态：已验证（实测：`"Address[^\r\n]*(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"` 对 "Address:  10.17.17.2" 提取出 "0.17.17.2"；去掉前缀改成直接 `(\d{1,3}...){4}` 后正确得到 "10.17.17.2"）
