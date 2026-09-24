@@ -5,10 +5,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: 'd245dcea-5575-4889-bbe7-93b773575f5c'
-  PropagateID: 'd245dcea-5575-4889-bbe7-93b773575f5c'
-  ReservedCode1: '5ec948cc-df08-424d-bc7d-4dfc4f85a02b'
-  ReservedCode2: '5ec948cc-df08-424d-bc7d-4dfc4f85a02b'
+  ProduceID: 'd2bd2db6-f234-4104-b4db-ed2aaf2f8556'
+  PropagateID: 'd2bd2db6-f234-4104-b4db-ed2aaf2f8556'
+  ReservedCode1: 'eed3f3e5-5937-453f-a66f-594f93959bf2'
+  ReservedCode2: 'eed3f3e5-5937-453f-a66f-594f93959bf2'
 ---
 
 # aardio 开发环境、工具链与方法论
@@ -187,53 +187,37 @@ aardio 通常不需要专门的 SDK，大多时候只需要：
 
 ## 二十、AA（autos）工具系统
 
-> **在第三方 IDE 中**：autos 的工具并非可用，等效替代动作见 `.trae/rules/workflow.md` 的映射表（loadcodex → aiRunner.exe，lookup_library_reference → 读 lib/ 底部 intellisense 块，search_text → Grep docs/examples 等）。本节用于理解 autos 体系与移植其方法论。
+> **在第三方 IDE 中**：autos 的工具并非可用，等效替代动作见 `.trae/rules/workflow.md` 的映射表（execute_code → aalint，lookup_library_reference → 读 lib/ 底部 intellisense 块，search_text → Grep docs/examples 等）。本节用于理解 autos 体系与移植其方法论。
 
-### 21.1 核心工具列表
+> **v44 工具体系大改（2026-09 同步）**：原 loadcode/loadcodex/loadcodex_clean/loadcodex_async 四工具合并为 `execute_code`（编译失败返回详细错误，成功则运行；支持 codeReplacement/codePatches 内存补丁、threadMode="async" 异步、appBaseDirectory 指定应用基准目录），配套新增 `wait_async_result`；`aifix`、`get_library_source`、`switch_memory`、`search_web_aardio_site` 已从 schemas 移除（ide.aifix 仍内置 IDE；提示词仍提及 get_library_source 属官方自身不同步）；`save_string`→`save_files`（批量）、`search_text_in_dir`→`search_text`。
+
+### 21.1 核心工具列表（v44 schemas 实测 38 个）
 
 | 工具名 | 用途 |
 |---|---|
-| `loadcodex` | 执行 aardio 代码 |
-| `loadcodex_clean` | 重新加载已修改的库后执行代码 |
-| `loadcodex_async` | 异步执行代码 |
-| `loadcode` | 执行代码（不加载 autos 环境） |
-| `aifix` | AI 修复代码 |
-| `lookup_library_document` | 查询库参考文档 |
-| `search_web` | 网络搜索（支持 Tavily/Exa/Bocha） |
-| `search_web_aardio_site` | 搜索 aardio 官方网站 |
-| `http_get` | HTTP GET 请求 |
-| `ide_open_file` | 在 IDE 中打开文件 |
-| `ide_new_code` | 在 IDE 中新建代码 |
-| `ide_get_code` | 获取 IDE 中的代码 |
-| `ide_replace_code` | 替换 IDE 中的代码 |
-| `ide_get_project` | 获取当前工程信息 |
-| `get_library_source` | 探查库源码 |
-| `search_text_in_dir` | 在目录中搜索文本 |
-| `save_string` | 保存字符串到文件 |
-| `load_string` | 从文件加载字符串 |
-| `read_text_file` | 读取文本文件 |
+| `execute_code` | 执行 aardio 代码（编译+运行一体）；支持 codeReplacement（oldText/newText 单替换）、codePatches（多块原子补丁）、threadMode="async"、appBaseDirectory |
+| `wait_async_result` | 获取 execute_code 异步线程执行结果 |
+| `lookup_library_reference` | 查询库参考文档（基于库源码智能提示声明生成） |
+| `search_text` | 搜索工程/文档/范例（原 search_text_in_dir 改名） |
+| `list_directory` | 列出目录内容 |
+| `load_string` | 读取整个文件 |
+| `read_text_file` | 按行/按 pattern 精确读取 |
+| `save_files` | 批量保存文件（原 save_string） |
 | `patch_text_file` | 补丁式编辑文本文件 |
 | `edit_text_file` | 编辑文本文件 |
 | `rollback_text_file` | 回滚文本文件 |
 | `clean_backup_text_files` | 清理备份文件 |
-| `download_file` | 下载文件 |
-| `download_7zip_file` | 下载并解压 7z 文件 |
-| `download_zip_file` | 下载并解压 zip 文件 |
-| `github_lookup_repo` | 查看 GitHub 仓库 |
-| `github_get_repo_zip_url` | 获取 GitHub 仓库 zip URL |
-| `github_get_content` | 获取 GitHub 仓库内容 |
-| `weixin_send_message` | 微信发送消息 |
-| `weixin_send_file` | 微信发送文件 |
-| `feishu_send_message` | 飞书发送消息 |
-| `feishu_send_file` | 飞书发送文件 |
-| `list_directory` | 列出目录内容 |
-| `process_popen` | 执行外部进程 |
-| `process_execute` | 执行外部进程（不等待） |
-| `write_memory` | 写入长期记忆 |
-| `read_memory` | 读取长期记忆 |
-| `list_memory` | 列出记忆文件 |
-| `switch_memory` | 切换主记忆 |
-| `analyze_image` | 图像分析 |
+| `http_get` | HTTP GET 请求 |
+| `search_web` | 网络搜索（Tavily/Exa/Bocha） |
+| `download_file` / `download_7zip_file` / `download_zip_file` | 下载与解压 |
+| `github_lookup_repo` / `github_get_repo_zip_url` / `github_get_content` | GitHub 仓库操作 |
+| `weixin_send_message` / `weixin_send_file` | 微信发送消息/文件 |
+| `feishu_send_message` / `feishu_send_file` | 飞书发送消息/文件 |
+| `ide_open_file` / `ide_new_code` / `ide_get_code` / `ide_replace_code` / `ide_get_project` | IDE 交互 |
+| `process_popen` / `process_execute` / `process_powershell` | 外部进程与 PowerShell |
+| `analyze_image` / `capture_screenshot` | 视觉分析/截屏 |
+| `write_memory` / `read_memory` / `list_memory` | 长期记忆（主记忆+HANDOFF.md+ADR 三层架构，见第二十一章） |
+| `load_skill` | 按需加载技能包 |
 
 ### 21.2 技能包系统
 
@@ -254,46 +238,44 @@ skill.md 元数据格式：
 <!-- autos.skill.minAutos: 3.5 -->
 ```
 
-**内置技能包**：
+**内置技能包**（v44 实测 14 个）：
 
 | 技能包 | 说明 |
 |---|---|
 | `skillCreator` | 技能包创建器 |
-| `chromiumWebDriver` | Chromium WebDriver 自动化 |
-| `excel` | Excel 操作（COM） |
-| `pdf` | PDF 处理 |
-| `photoshop` | Photoshop 自动化（COM） |
-| `word` | Word 操作（COM） |
-| `powerPoint` | PowerPoint 操作（COM） |
+| `aardioProjectBuilder` | 自动创建 aardio 工程 |
+| `aardioLibraryBuilder` | 自动构建 aardio 扩展库 |
+| `cad` | AutoCAD 二维制图（AI 自动写/调用 C# 插件，支持在 AutoCAD 内执行 C# 脚本，新旧 .NET 通吃） |
+| `solidWorks` | SolidWorks 三维制图 |
+| `blender` | Blender 三维套件 |
+| `chromiumWebDriver` | Chromium WebDriver 浏览器自动化 |
+| `videoDownloader` | 下载在线视频 |
+| `printFix` | 打印修复 |
+| `excel` / `word` / `powerPoint` / `pdf` / `photoshop` | Office 与图像自动化（excel/word/ppt 技能已重构为使用 fsys.openXml） |
 
-### autos 的 30 个工具详解（从源码提炼）
+### autos 工具详解（v44 实测 38 个，从源码提炼）
 
-> autos 之所以能让 AI 写出精准的 aardio 代码，核心是它给 AI 配备了一套完整的工具链。以下是 30 个工具的分类和关键设计。
+> autos 之所以能让 AI 写出精准的 aardio 代码，核心是它给 AI 配备了一套完整的工具链。以下是工具的分类和关键设计（v44：loadcode 系四合一为 execute_code，aifix/get_library_source/switch_memory/search_web_aardio_site 已移除）。
 
-#### 代码执行类（3个）
-- `loadcodex` —【首选】运行 aardio 代码并返回结果
-- `loadcodex_clean` —【隔离环境】干净线程执行，避免库缓存
-- `loadcodex_async` —【异步】耗时程序，不等待结果
+#### 代码执行类（2个）
+- `execute_code` —【首选】编译+运行一体：编译失败返回详细错误（含行号），成功则运行；支持 codeReplacement（oldText/newText 单替换）、codePatches（多块原子补丁）、threadMode="async" 异步、appBaseDirectory 指定应用基准目录
+- `wait_async_result` —【配套】获取异步线程执行结果（配 execute_code(threadMode="async")）
 
-#### 语法检查类（2个）
-- `loadcode` — 仅编译不运行，检测语法错误
-- `aifix` — 调用 ide.aifix 自动修复常见错误
-
-#### 文档查询类（2个）
+#### 文档查询类（1个）
 - `lookup_library_reference` — 获取库参考文档（从智能提示生成）
-- `get_library_source` — 获取库物理源码文件
+- ~~`get_library_source`~~ — v44 已从 schemas 移除（提示词仍提及，属官方不同步）；直接 Read 库源码等效
 
 #### 文件操作类（6个）
-- `save_string` — 覆盖式写入文件
+- `save_files` — 批量保存文件（原 save_string）
 - `load_string` — 读取整个文件
 - `read_text_file` — 按行/按 pattern 精确读取
 - `patch_text_file` — Aider 风格 SEARCH/REPLACE 补丁
 - `edit_text_file` — 行号/锚点精确编辑
 - `rollback_text_file` — 回滚到自动备份
 
-#### 搜索类（3个）
+#### 搜索类（2个）
 - `list_directory` — 列目录内容
-- `search_text_in_dir` — 在目录中搜索文件内容（支持 project/docs/examples 别名）
+- `search_text` — 在目录中搜索文件内容（支持 project/docs/examples 别名；原 search_text_in_dir 改名）
 
 #### IDE 交互类（5个）
 - `ide_open_file` — 在编辑器中打开文件
@@ -302,10 +284,9 @@ skill.md 元数据格式：
 - `ide_replace_code` — 替换编辑器代码（写入前编译检查）
 - `ide_get_project` — 获取工程信息
 
-#### 联网类（6个）
+#### 联网类（5个）
 - `http_get` — 简单 HTTP GET
 - `search_web` — 通用搜索（Tavily/Exa/Bocha）
-- `search_web_aardio_site` — aardio 站内搜索
 - `download_file` — 下载文件
 - `download_7zip_file` — 下载并解压 7zip
 - `download_zip_file` — 下载并解压 zip
@@ -315,11 +296,11 @@ skill.md 元数据格式：
 - `github_get_content` — 读仓库文件内容
 - `github_get_repo_zip_url` — 获取 zip 下载地址
 
-#### 记忆类（4个）
+#### 记忆类（3个）
 - `write_memory` — 写入长期记忆
 - `read_memory` — 读取记忆分枝
 - `list_memory` — 列出所有记忆分枝
-- `switch_memory` — 备份并切换主记忆
+- ~~`switch_memory`~~ — v44 已移除（主记忆由界面选择，HANDOFF.md/ADR 接管项目级状态）
 
 #### 视觉类（2个）
 - `analyze_image` — 视觉 AI 分析图片

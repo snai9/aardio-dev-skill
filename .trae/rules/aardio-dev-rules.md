@@ -3,10 +3,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: '507ff2cc-550d-4efb-8bf6-78b57f40731f'
-  PropagateID: '507ff2cc-550d-4efb-8bf6-78b57f40731f'
-  ReservedCode1: 'ed0123cd-86b6-4fcd-b4c2-bacb7d2469af'
-  ReservedCode2: 'ed0123cd-86b6-4fcd-b4c2-bacb7d2469af'
+  ProduceID: '5fa00afe-032a-4cf4-81e6-ce600b8efab7'
+  PropagateID: '5fa00afe-032a-4cf4-81e6-ce600b8efab7'
+  ReservedCode1: '8152dbae-1cdf-41d7-ab42-a768c03cfe7e'
+  ReservedCode2: '8152dbae-1cdf-41d7-ab42-a768c03cfe7e'
 ---
 
 # aardio 开发规则
@@ -33,10 +33,10 @@ AIGC:
 
 ### 2.0.2 编译检查作为安全网
 
-- **写入 .aardio 文件前，先用 `loadcode` 编译检查**，通过后再写入
+- **写入 .aardio 文件前，先做编译检查**（autos 的 execute_code 编译失败即返回详细错误；第三方 IDE 用 `aalint <file>`），通过后再写入
 - 执行代码前，先编译检查；编译失败时考虑自动修复后再重试
 - 修改库文件后，用干净线程重新 `import` 验证（避免缓存旧版本）
-- 这是 autos 的核心机制：`loadcode 编译 → 失败 → aifix 修复 → 再编译 → 通过才写入`
+- 这是 autos 的核心机制：`编译检查 → 失败 → 修复 → 再检查 → 通过才写入`（v44 前为 loadcode/aifix 独立工具，v44 后 execute_code 编译+运行一体）
 
 ### 2.0.3 分而治之，控制上下文
 
@@ -66,6 +66,8 @@ AIGC:
 - 修改源码后必须**重新编译**（F7）才能看到效果，F5 可直接运行源码调试
 - 窗口位置保存/恢复必须用 **`win.util.savePosition(winform)` + `winform.bindConfig()`**，不要手动读写 left/top/right/bottom
 - **`/*DSG{{*/` 区域的修改会被窗体设计器覆盖**。锚点（dl/dr/dt/db）等属性必须在 `/*}}*/` 之后的运行时代码中设置
+- **主窗体变量命名（用户指定规范，强制）**：工程入口文件 `main.aardio` 的窗体变量必须是全局 `mainForm`（不带 `var`），即 `mainForm = win.form(...)`；`var winform = win.form(...)` 仅用于其他窗体文件或弹窗。全文件引用（控件访问、thread.invoke 传参、线程函数形参接收主窗体）统一用 `mainForm`，不要混用 winform。程序尾部的 `win.loopMessage()` 是 win 库函数，保持 `win.` 前缀不改
+- **bkplus 控件的 `text` 赋值后画面不重绘**（text 是普通数据成员，metaProperty 无 `_set`），窗口显示后再赋值必须手动调用 `ctrl.redraw()`；动态文字优先用 plus 控件（其 text 赋值自动重绘）
 
 ### 2.3 字符串
 
@@ -129,15 +131,15 @@ AIGC:
 
 > autos 之所以能让 AI 写出精准的代码，核心原因之一是它给了 AI 一套完整的"什么场景用什么工具"的路由表。
 
-### 4.1 代码执行与验证
+### 4.1 代码执行与验证（v44 工具名已改：execute_code 四合一）
 
-| 场景 | 首选工具 | 说明 |
+| 场景 | 首选工具（v44） | 说明 |
 |------|---------|------|
-| 运行 aardio 代码并拿结果 | `loadcodex` | 直接执行，返回第一个返回值 |
-| 需要干净隔离环境 | `loadcodex_clean` | 新线程执行，避免库缓存 |
-| 耗时程序，不需要结果 | `loadcodex_async` | 异步执行，立即返回 |
-| 仅检查语法 | `loadcode` | 编译不运行 |
-| 自动修复常见错误 | `aifix` | 基于模式匹配修复 |
+| 编译并运行代码拿结果 | `execute_code` | 编译失败返回详细错误（含行号），成功则运行（原 loadcode+loadcodex） |
+| 需要干净隔离环境 | `execute_code` | 独立进程/线程执行，避免库缓存（原 loadcodex_clean） |
+| 耗时程序，不需要立即结果 | `execute_code(threadMode="async")` + `wait_async_result` | 异步执行（原 loadcodex_async） |
+| 仅检查语法 | `execute_code`（编译失败即返回） | 第三方 IDE 等效：`aalint <file>` |
+| 自动修复常见错误 | ~~`aifix`~~（v44 移除） | ide.aifix 仍内置 IDE；第三方等效 `aalint --fix` |
 
 ### 4.2 文件操作
 
@@ -205,7 +207,7 @@ AIGC:
 | 写入长期记忆 | `write_memory` | 支持追加/覆盖 |
 | 读取记忆 | `read_memory` | 按分枝读取 |
 | 列出记忆 | `list_memory` | 所有分枝文件 |
-| 切换记忆 | `switch_memory` | 备份+切换主记忆 |
+| ~~切换记忆~~ | ~~`switch_memory`~~ | v44 移除；项目级状态用 HANDOFF.md（主记忆登记指针），历史归档 docs/adr/ |
 | 加载技能包 | `load_skill` | 按需注入 skill.md |
 
 ## 五、系统化开发流程
@@ -269,12 +271,12 @@ CRITICAL CONSTRAINT: You must explicitly output state checkpoints in your respon
 
 ## 六、注释版文件规则
 
-### 6.1 必须同步维护注释版
+### 6.1 生成时机：仅提交远程仓库前（2026-09-22 修订，强制）
 
-- **每个 `.aardio` 源码文件都必须有对应的注释版**，文件名在原文件名后加"注释"两字
-  - 例：`main.aardio` → `main_注释.aardio`，`collect.aardio` → `collect_注释.aardio`
-- **修改源码时必须同步更新注释版**，不能让注释版落后于源码。同步时机按**已验证的改动批次**：连续调试同一文件的中间态可暂缓，但该批次验证通过、切换下一任务前必须同步完成，禁止跨任务积压
-- **新增源码文件时必须同时创建注释版**
+- **日常开发期间不同步注释版**：写码、调试、反复修正过程中只维护源码，禁止每改一次就修一次注释版（浪费 token，且中间态注释毫无价值）
+- **提交远程仓库（commit/push）前必须生成/更新注释版**：为本次提交涉及的每个 `.aardio` 源码文件生成或更新对应注释版，与源码同批提交；提交点的注释版必须与源码最终状态严格一致
+- **新增源码文件且本次要提交时**：同时创建注释版；文件名在原文件名后加"注释"两字（例：`main.aardio` → `main_注释.aardio`）
+- **例外**：用户明确要求"生成注释版/教学版"时随时生成，不受提交时机限制；纯本地验证、未提交的改动不需要注释版
 - **注释版不参与编译**：aardio 发布只编译 aproj 中显式列出的文件，注释版默认不进 exe（这是期望行为）。**禁止把注释版加进 aproj**（尤其 embed=true 目录）——白白增大体积且明文暴露源码；注释版仅用于人学习与 AI 复习项目逻辑
 
 ### 6.2 注释风格要求
@@ -286,6 +288,7 @@ CRITICAL CONSTRAINT: You must explicitly output state checkpoints in your respon
 - 关键代码行加**行内注释**：解释为什么这样写、容易踩什么坑
 - **aardio 陷阱必须在注释中标注**：如 BGR/ARGB 颜色格式、`..` 前缀、`for in` 第一个变量是键、`string.match` 返回多值不是数组等
 - 注释用 `//` 单行注释或 `/* */` 块注释，风格统一
+- **生成后必须验证等价性**：将注释版剥离注释后与源码逐行 diff，确保只增注释未改逻辑（历史事故：生成注释版时误改代码 `io.exist`→`io.fileExists`、`showTip`→`showMsg`，造成源码注释版行为分叉）
 
 ### 6.3 注释版示例
 

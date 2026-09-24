@@ -3,10 +3,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: '8f39cf45-dd85-4179-94ef-45ba4a085bf8'
-  PropagateID: '8f39cf45-dd85-4179-94ef-45ba4a085bf8'
-  ReservedCode1: 'be278aa0-72bf-4b36-806e-02b584c3cc25'
-  ReservedCode2: 'be278aa0-72bf-4b36-806e-02b584c3cc25'
+  ProduceID: '3727d607-91b1-4d5b-8ae3-7cb0c77f2005'
+  PropagateID: '3727d607-91b1-4d5b-8ae3-7cb0c77f2005'
+  ReservedCode1: '5e9aac5f-e9cf-4fdf-bcd6-831a995fbd5f'
+  ReservedCode2: '5e9aac5f-e9cf-4fdf-bcd6-831a995fbd5f'
 ---
 
 # 第三方 IDE 复刻 aardio 官方 AI 助手（autos）能力的工作流
@@ -94,7 +94,7 @@ A="$AARDIO/aalint.exe"   # Git Bash 写法
 - **测试代码只用 `print(...)` 和 `return`** 回传结果，不用 `console.log`（aalint 能捕获 print/stdout，但 console.log 会开控制台窗口）
 - GUI 冒烟脚本按 show → delay → 断言 → close → return 模式自行退出（不进无限期 win.loopMessage）；`--ui-smoke` 可自动触发控件事件
 - 执行均为独立进程，天然等效 `loadcodex_clean`（无库缓存问题）；崩溃/卡死用 `--run-isolated` 隔离
-- 被测脚本内 `io.fullpath("/")` 解析为**脚本所在目录**（aalint 与 aiRunner 同用 fiber 应用根目录机制，与 IDE F5 行为一致），项目代码无需为测试加路径回退；项目私有用户库（脚本目录下 `\lib`）可直接 import
+- 被测脚本内 `io.fullpath("/")` 解析为**脚本所在目录**（aalint 与 aiRunner 同用 fiber 应用根目录机制，与 IDE F5 行为一致），项目代码无需为测试加路径回退；项目私有用户库（脚本目录下 `\lib`）可直接 import。官方 v44 将工具参数路径（HostPath，相对工作区）与代码内路径（GuestVAP，相对应用基准目录）严格区分——第三方 IDE 写码时对应概念：命令行参数路径相对当前工作目录，代码内 `"/x"` 相对脚本应用根目录，两者勿混拷
 - aalint 放 `$AARDIO\` 下经 `~/lib/` 直接找到全部标准库；想测试 GUI 逻辑时，另写独立测试脚本或用 `--setup` 注入 mock，不要在源文件里塞测试代码
 
 ### 2.4 备用工具 aiRunner（仅 aalint 缺失时用）
@@ -119,22 +119,24 @@ junction 后未嵌入的库从磁盘解析（任何标准库/扩展库可用）�
 ## 三、autos 工具 → 第三方 IDE 等效动作映射表
 
 > AI 助手请严格按此表选择动作，等效于官方助手的工具路由。
+> **v44.3 同步（2026-09）**：原 loadcode/loadcodex/loadcodex_clean/loadcodex_async 四工具合并为 `execute_code`；aifix/get_library_source/switch_memory/search_web_aardio_site 已从 schemas 移除；save_string→save_files、search_text_in_dir→search_text。
 
 | autos 工具 | 用途 | 第三方 IDE 等效动作 |
 |-----------|------|-------------------|
-| `loadcodex` | 执行 aardio 代码 | `aalint --run --capture --timeout 10 <file>`（输出与首返回值直接可见；`--json` 得 `output` 字段） |
-| `loadcode` | 仅编译检查 | `aalint <file>`（批量：`--dir`） |
-| `loadcodex_clean` | 干净环境执行 | aalint 每次独立进程，天然等效 |
-| `loadcodex_async` | 异步执行耗时程序 | `aalint --run-isolated --timeout 8 <file>`（子进程隔离，不阻塞对话） |
-| `aifix` | 自动修复语法 | `aalint --fix --dry-run <file>` 预览 → `aalint --fix <file>` 实改（带逐行 diff） |
+| `execute_code` | 编译+运行 aardio 代码（一体）；支持 codeReplacement/codePatches 内存补丁与 appBaseDirectory | `aalint --run --capture --timeout 10 <file>`（输出与首返回值直接可见；`--json` 得 `output` 字段） |
+| `execute_code` 编译失败返回错误 | 仅编译检查 | `aalint <file>`（批量：`--dir`） |
+| `execute_code` 独立进程 | 干净环境执行 | aalint 每次独立进程，天然等效 |
+| `execute_code(threadMode="async")` + `wait_async_result` | 异步执行耗时程序 | `aalint --run-isolated --timeout 8 <file>`（子进程隔离，不阻塞对话） |
+| ~~`aifix`~~（v44 移除） | 自动修复语法 | `aalint --fix --dry-run <file>` 预览 → `aalint --fix <file>` 实改（基于 IDE 内置 ide.aifix，仍可用） |
 | `lookup_library_reference` | 查库 API 文档 | `aalint --api <库名.成员>`；内置库成员或需完整文档时 Grep `$AARDIO\lib\<库名>\*.aardio` 底部 `/**intellisense()**/` 块 |
-| `get_library_source` | 查库源码 | Read `$AARDIO\lib\...` 对应文件 |
-| `search_text_in_dir(path='docs')` | 搜文档 | Grep `$AARDIO\docs` |
-| `search_text_in_dir(path='examples')` | 搜范例 | Grep `$AARDIO\examples` |
+| ~~`get_library_source`~~（v44 移除） | 查库源码 | Read `$AARDIO\lib\...` 对应文件 |
+| `search_text(path='docs')` | 搜文档 | Grep `$AARDIO\docs` |
+| `search_text(path='examples')` | 搜范例 | Grep `$AARDIO\examples` |
 | `list_directory` | 列目录 | ls / Glob |
 | `read_text_file` / `load_string` | 读文件 | Read |
 | `patch_text_file` / `edit_text_file` | 改文件 | Edit（SEARCH/REPLACE 语义） |
-| `save_string` | 写文件 | Write；**写 `.aardio` 前必须先 `aalint` 编译检查** |
+| `save_files` | 批量写文件 | Write；**写 `.aardio` 前必须先 `aalint` 编译检查** |
+| `weixin_send_*` / `feishu_send_*` | 发消息/文件 | 调用对应 IM 的 API/webhook；第三方 IDE 无内置工具，需用户提供接口配置 |
 | `ide_get_code` / `ide_replace_code` | 编辑器交互 | 直接 Read/Edit 工程源码文件 |
 | `ide_open_file` | 在 IDE 打开 | bash `start aardio.exe <file>`（仅展示用） |
 | `ide_get_project` | 工程信息 | Read `default.aproj`（XML） |
@@ -143,8 +145,8 @@ junction 后未嵌入的库从磁盘解析（任何标准库/扩展库可用）�
 | `http_get` / `download_file` | 网络请求 | Bash curl / WebFetch |
 | `search_web` | 联网搜索 | WebSearch |
 | `github_get_content` 等 | GitHub | gh CLI / WebFetch |
-| `write_memory` / `read_memory` | 长期记忆 | **.trae/skills/aardio-traps/resources/pitfalls.md 坑库（主）+ .trae/skills/aardio-traps/SKILL.md 陷阱章节（沉淀）**：踩新坑立即记录、写码前先查 |
-| `load_skill` | 技能包 | 参照 `$AARDIO\lib\autos\skills\` 内置技能（excel/pdf/word/chromiumWebDriver 等）的用法文档 |
+| `write_memory` / `read_memory` | 长期记忆 | **.trae/skills/aardio-traps/resources/pitfalls.md 坑库（主）+ .trae/skills/aardio-traps/SKILL.md 陷阱章节（沉淀）**：踩新坑立即记录、写码前先查；复杂任务可仿官方 HANDOFF.md（项目根，主记忆中登记指针） |
+| `load_skill` | 技能包 | 参照 `$AARDIO\lib\autos\skills\` 内置技能（cad/blender/videoDownloader/excel/pdf/word 等 14 个）的用法文档 |
 | `analyze_image` | 图像识别 | 视觉模型（如 IDE 自带的多模态能力） |
 | `capture_screenshot` | 截屏 | 让用户截，或写 aardio 脚本用 aalint 跑 `gdip.snap` |
 

@@ -3,10 +3,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: 'ad7846c3-252a-438c-845a-75344873ff9a'
-  PropagateID: 'ad7846c3-252a-438c-845a-75344873ff9a'
-  ReservedCode1: 'e6e19209-fcec-4355-901e-ef5ea09dfb47'
-  ReservedCode2: 'e6e19209-fcec-4355-901e-ef5ea09dfb47'
+  ProduceID: '73e5c557-7d50-43f8-8d5d-22e3378cb2b6'
+  PropagateID: '73e5c557-7d50-43f8-8d5d-22e3378cb2b6'
+  ReservedCode1: '647eee0e-b949-469e-ad39-5ed126dce852'
+  ReservedCode2: '647eee0e-b949-469e-ad39-5ed126dce852'
 ---
 
 # aardio 踩坑记录（PITFALLS）
@@ -43,6 +43,181 @@ AIGC:
 ---
 
 ## 记录区（新记录追加在这一行下面）
+
+### 2026-09-23 thread.invoke 线程函数无 pcall 保护：任何异常导致线程静默死亡，setBusy(false) 不执行 UI 永久锁死
+- 状态：已验证（用户实测两次"生成中"后永远不动，只能重启程序；根因是线程内网络/解析异常 → 线程死亡 → setBusy(false) 不执行 → 按钮永久禁用+进度条残留）
+- 场景：视频生成线程（HTTP 轮询 + 下载），任何一处网络异常/JSON 解析失败/对 null 取成员都会让线程静默死亡——UI 停在最后一次显示的文字上，用户不知道发生了什么
+- 根因：aardio 的 thread.invoke 线程函数不会自动捕获异常——异常发生时线程直接终止，末尾的清理代码（解锁 UI）不执行；错误信息也不显示（线程内的错误弹窗可能因线程上下文而丢失）
+- 解决（模板：线程函数必须 pcall 包裹 + 外层统一清理）：
+  ```aardio
+  thread.invoke(function(mainForm, ...args){
+      // 整体 pcall：任何异常都捕获，不让线程静默死亡
+      var ok, err = pcall(function(){
+          // ... 线程主逻辑（return 提前退出也走外层清理）...
+      });
+      // 无论成功失败，清理代码必须执行
+      mainForm.setBusy(false);
+      if(!ok){
+          mainForm.videoArea.text = "生成中断";
+          mainForm.msgboxErr(tostring(err : "未知错误"), "标题");
+      }
+  }, mainForm, ...args);
+  ```
+- 附带修复的坑：
+  - `createData["video_id"]` 当 createData 为 null 时直接崩线程 → 改 `createData ? (...) : null`
+  - `tostring(errInfo) or "视频生成失败"` → tostring(null) 返回 truthy "null"，or 永远不触发 → 改 `errInfo : "..."`
+  - 轮询 HTTP 客户端共享创建任务的 300s 接收超时 → 单次挂 5 分钟 → 独立客户端 30s
+  - 轮询无连续失败上限 → 429/断网最多转 90 圈 = 270 秒无反馈 → 连续 10 次失败（约 30s）主动退出报错
+- 教训：**所有 thread.invoke 的线程函数，第一行到最后一行必须包在 pcall 里，清理代码写在 pcall 外**；不包 pcall 的线程 = 埋雷，异常一响 UI 永久卡死
+
+### 2026-09-23 "str" ++ null 报「Expected:value」；io.exist(不存在) 返回 null 不是 false；tostring(null) 正常但嵌套当参数可能报错
+- 状态：已验证（`"a" ++ null` 报错；`"a" ++ tostring(null)` 正常返回 `"anull"`；`io.exist(不存在的路径)` 返回 null（type=null, ===null 为 YES）；`tostring(null)` 单独调用返回 string 类型正常；但 `"text" ++ tostring(io.exist(不存在的路径))` 偶发报 `Calling:'tostring' Bad argument:@1 Expected:value`——疑似 aardio 把返回 0 值的函数调用当缺失参数（与返回 null 不同），上下文敏感尚未完全定论）
+- 场景：测试脚本 `log("存在=" ++ tostring(io.exist(path)))` 对删除后的文件路径报错崩溃
+- 解决：
+  - ❌ `"str" ++ null` → ✅ `"str" ++ tostring(null)` 或 `"str" ++ (null : "null")`
+  - ❌ `tostring(funcReturnsNothing())` → ✅ `var v = funcReturnsNothing(); tostring(v : null)`（先接收再兜底）
+  - 日常代码用 `if(io.exist(path))` 判存在不受影响（null 是 falsy）；仅 `++` 连接或函数参数传递时注意
+- 教训：aardio 中"返回 null"和"返回 0 个值"可能有隐微差异（前者 tostring 正常、后者可能报缺失参数）；`++` 连接前对可能为 null 的表达式一律先 `tostring(expr)` 或 `expr : ""` 兜底
+
+### 2026-09-23 raw.explore(path) 不带参数对文件退化为"用默认程序打开"；带 "/select" 才是"打开文件夹并选中"
+- 状态：已验证（用户反馈"打开文件夹结果直接播放了视频"；docs 确认 `raw.explore(path,"/select")` 正确用法）
+- 场景：历史记录「打开文件夹」按钮用 `raw.explore(path)` 想打开视频所在目录，结果用系统播放器播放了视频
+- 解决：❌ `raw.explore(path)` → ✅ `raw.explore(path, "/select")`
+- 教训：raw.explore 对目录路径直接打开资源管理器，对文件路径行为不同——必须带 `/select` 参数
+
+### 2026-09-23 按分隔符切分多字节文本：string.split 按字节碎段、(.-)非贪婪遇多字节字面量失败；用 find+slice 字节自洽方案
+- 状态：已验证（--api 未找到 string.split；实测 string.split("a，b，c","，") 返回 **7 段**——中文逗号 3 字节被逐字节切；type(string.gmatch)=function 存在但 "(.-)，" 零迭代；string.match("a，b，c","(.-)，") 返回 null；同字面量 string.find 正常返回字节位置 2-4、string.replace 正常替换、贪婪 "避免出现：(.+)" 捕获正常）
+- 场景：构建器九段拆分用 string.split(seedText, "，") 切中文逗号——段全部碎成单字节残片，拆分回填从未正确工作（冒烟未触发该分支所以未暴露，测试往返一致性才炸出）；且 `for(i,seg in string.split(...))` 直调多返回值函数实测报「不支持此操作:call 类型:table」——for-in 把 string.split 的第 2 个返回值当迭代器函数调用（先单变量接收再遍历则正常，报错点的 for-in 直调是第二重坑）
+- 实测行为矩阵（模式匹配对多字节字面量）：
+  - string.find("，") / string.indexOf / string.replace：✅ 正常（位置为**字节位置**）
+  - string.match/gmatch + **非贪婪 (.-)** + 多字节字面量：❌ null/零迭代（含 <>、[] 包裹均失败）
+  - string.match + **贪婪 (.+)** + 多字节字面量前缀：✅ 正常（"避免出现：(.+)" 实测可用）
+  - string.slice：**字节位置语义**（slice("a中b",1,2)="a"+半字乱码）——与 find 字节位置自洽
+- 解决（按分隔符切分文本的可用实现，全部环节已实测）：
+  ```aardio
+  var splitSegments = function(text){
+      var t = string.replace(text, '\r\n', ",");   // 换行必须用单引号转义字符串（见下方双引号转义坑）
+      t = string.replace(t, '\n', ",");
+      t = string.replace(t, "，", ",");            // replace 对多字节字面量正常
+      t = t ++ ",";
+      var segs = {};
+      var pos = 1;
+      while(true){
+          var a,b = string.find(t, ",", pos);      // find 返回字节位置
+          if(a){
+              var v = string.trim(string.slice(t, pos, a-1));  // 分隔符边界=完整 UTF-8 字符边界，切分安全
+              if(#v) table.push(segs, v);
+              pos = b + 1;
+          }
+          else{ break; }
+      }
+      return segs;
+  }
+  ```
+- 教训：aardio 字符串 API 位置参数**默认按字节**（find/slice 自洽但极易与"字符直觉"冲突）；模式串里非贪婪 (.-) 与多字节字面量组合不可用，多字节切分优先 find+slice 或贪婪捕获；涉及分隔符切分先写往返一致性测试（拼装→拆分→逐段比对），只测拼装测不出拆分坑
+
+### 2026-09-23 aardio 双引号字符串不转义："\r\n" 是 4 个字面字符，只有单引号字符串才处理转义
+- 状态：已验证（aalint --run 探针实测：string.byte("\r")=92（反斜杠）、string.byte('\r')=13（CR）；edit.text 赋 '\r\n' 读回 13,10 保真，赋 "\r\n" 读回 92,114,92,110 字面文本）
+- 场景：生图工具把提示词拼装从中文逗号改为换行分段，分隔符用双引号 "\r\n" 写——预览框显示的是字面文本 \r\n 不是换行；首版冒烟两边都用双引号断言，错错相等"通过"；第二版 string.find(edit.text, '\r\n')（真 CRLF）找不到才暴露
+- 根因：aardio 双引号字符串是原始字符串（零转义），单引号字符串才支持 \r \n \t \\ 等转义；与其他语言"双引号才转义"的习惯相反，凭经验写 "\r\n" 静默产出反斜杠字面文本，不报错
+- 解决：
+  - ❌ "a\r\nb"（= a \ r \ n b 六个字面字符）→ ✅ 'a\r\nb'（= a CR LF b）
+  - 给 edit 赋多行文本、模式匹配找真换行，一律单引号 '\r\n'；模式串中查"字面反斜杠文本 \r\n"用 string.find(s, "\\r\\n")（双引号原始 6 字符经模式引擎转义得字面 \r\n）或 string.indexOf(s, "\r\n")（双引号原始正好 4 字符）
+  - 断言防"错错相等"：拼装结果额外检查 `if(string.find(结果,"\\r\\n")) error("混入字面反斜杠")`，双引号字面文本 vs 真转义两边都用双引号写会双双翻车还全绿
+  - 全库自查一键扫（修过一处后别再问"还有多少"）：PowerShell `Select-String -Path *.aardio -Pattern '"[^"]*\\[nrt][^"]*"'`——命中即"双引号内疑似假转义"，人工过目剔除故意字面场景（如模式串 "\\r\\n" 本来就要匹配字面反斜杠文本）；单引号写法不会命中。生视频项目 2026-09-23 修完 4 处后残留的删除确认弹窗 "\n" 就是靠它一击命中的（此前同一坑已踩 3 次）
+- 教训：aardio 源码里凡 \r \n \t \\ 转义需求先看引号类型——单引号才有转义，双引号永远原样；代码评审/读他人代码时把双引号里的 \x 一律先当字面文本看待
+
+### 2026-09-23 string.find/string.match 的 pattern 是模式语法：尖括号 <> 是非捕获组，含字面尖括号的查找会静默失败
+- 状态：已验证（patterns.md：「`<subpattern>` 定义非捕获组」「`\<`、`\>` 匹配原始尖括号」；实测 string.find(p, "以 <Picture 1> 中的角色为参考") 返回 null，改 string.indexOf 纯字面查找 PASS）
+- 场景：示例拼装测试用 string.find(结果, subject) 断言"以 <Picture 1> 中的角色为参考"在结果里，文生视频/首尾帧都 PASS 唯参考生成 FAIL
+- 根因：aardio 的 string.find/string.match 第二参数是模式不是纯字面量；尖括号 `< >` 定义非捕获组，`<Picture 1>` 被当模式语法解析，与目标文本中的字面尖括号不匹配 → 返回 null（不报错，静默失败）
+- 解决：
+  - ❌ string.find(s, "含<尖括号>的字面文本") → ✅ string.indexOf(s, "含<尖括号>的字面文本")（纯字面子串查找，无模式语义）
+  - 或转义：string.find(s, "含\<尖括号\>的字面文本")
+- 教训：string.find/match 的第二参永远先当模式看待；凡模式串里可能混入用户内容（提示词、文件名、路径），要么 string.indexOf 要么转义尖括号
+
+### 2026-09-23 edit 控件没有 onEditChanged 事件（正确是 onChange）；combobox 手动输入是 onEditChange
+- 状态：已验证（Grep edit.aardio 源码 `_commandFuncnames={[0x300/*_EN_CHANGE*/]="onChange";...}` 确认映射；aalint --run 实测单行 edit 赋值触发 onChange editFired=1；combobox.aardio 确认 `[5/*_CBN_EDITCHANGE*/]="onEditChange"`）
+- 场景：生视频提示词构建器给 edit 段绑 `onEditChanged = updatePreview` 想做实时预览，输入后预览纹丝不动（但点"生成"时重算是对的——同一逻辑两次调用结果不同），用户反馈"预览里没有动作和场景"
+- 根因：edit 控件的文本变更事件叫 **onChange**（EN_CHANGE 映射），没有 onEditChanged；给控件挂不存在的事件名不报错（只是加了无效自定义字段），静默失效。combobox 是另一套：下拉选择 onSelChange、编辑框手动输入 onEditChange（CBN_EDITCHANGE），三者互不等价
+- 解决：
+  - ❌ `editCtrl.onEditChanged = fn` → ✅ `editCtrl.onChange = fn`
+  - ❌ combobox 只绑 onSelChange（手动输入不触发）→ ✅ onSelChange 与 onEditChange 都绑
+  - onSelChange 事件内取新值用 `selText`（文档明确：事件触发时 text 可能未同步）；手动输入场景取值用 `text`
+  - 单行 edit 用 text 属性赋值也会触发 onChange（多行不会）；代码改 combobox.selIndex 不触发 onSelChange——回填后需手动调一次刷新函数
+- 教训：给控件绑事件前先 Grep `lib/win/ui/ctrl/<控件>.aardio` 确认事件名（搜 `_commandFuncnames` 或 intellisense 注释），不凭记忆/其他框架经验猜事件名（生图项目同款 bug 也用了 onEditChanged，一直未被发现）
+
+### 2026-09-23 aardio.exe <file> 命令行是「用 IDE 打开文件」不是「运行脚本」；运行脚本用 aalint --run
+- 状态：已验证（aardio.exe "main.aardio" 启动后进程标题为 IDE 样式「main.aardio - 生图」，最小 string.save 脚本跑完目标文件未生成；改用 aalint --run 后文件正常生成且 PASS 输出）
+- 场景：想命令行跑 .temp 测试脚本和 GUI 主程序冒烟，误以为 `aardio.exe <script>` 等价 python 解释器直接执行
+- 根因：aardio.exe 是 IDE 主程序，命令行传文件路径 = 在 IDE 中打开该文件（还会误开 IDE 实例/标签占用户桌面）；aalint.exe 才是命令行执行器（模拟 IDE 按 F5）
+- 解决：
+  - ❌ `aardio.exe "x.aardio"`（打开 IDE，不执行）→ ✅ `aalint --run --capture --timeout 8 "x.aardio"`（真实执行并捕获输出）
+  - GUI 主程序（结尾 win.loopMessage() 不退出）冒烟：`aalint --run --timeout 6 <file>`，超时自动发 WM_CLOSE 关窗正常退出，PASS 即无运行时错误
+  - `--ui-smoke` 对 simpleWindow 无边框自绘标题栏窗口会崩（已验证），此类程序用 --timeout 兜底即可
+- 教训：验证闭环永远是 aalint（编译 / --run / --lint），aardio.exe 只用来人工打开 IDE
+
+### 2026-09-23 combobox 的 items 初始化默认选中第 1 项（selIndex=1），默认值会被意外拼进结果
+- 状态：已验证（aalint --run 实测：`items={"无";"A";"B"}` 创建后 selIndex=1、text="无"）
+- 场景：生视频构建器 5 个下拉 items 把"无"放末尾，创建后默认选中第 1 项（如质量词"电影质感，画面流畅"），用户没碰过该段的值也被 buildPrompt 拼进预览/结果（预览出现"电影质感，画面流畅"）
+- 根因：combobox 库文档明确"仅在属性面板设置初始化 items 属性时初始化 selIndex 为 1"——items 第一项就是默认显示值
+- 解决：❌ 想要"空默认"却把"无"放 items 末尾 → ✅ 把「无」放 items 第 1 项（默认即"无"，拼装逻辑跳过），或创建后代码设 `selIndex = null` 取消选项
+- 教训：凡"items + 拼装/取值"逻辑，默认第 1 项必须是无害占位（如「无」），或显式 selIndex 处理
+
+### 2026-09-23 本机无 string.buffer / io.size / fsys.getExtension / string.join，正确 API 为 raw.tostring / string.load(#) / fsys.getExtensionName / table.concat
+- 状态：已验证（aalint --run 逐个实测报「不支持此操作:call method(table)」；--api 查询提示文件不存在）
+- 场景：生视频工具需要构造二进制音频测试数据、取文件大小、取扩展名、拼接数组为文本
+- 根因：这四个函数名都凭其他语言/库经验臆造，本机 aardio 标准库中不存在（string.buffer 不存在；io.size 不存在；fsys 库扩展名 API 叫 getExtensionName（返回小写不带点，无扩展返回 null）；字符串数组拼接用 table.concat，不是 string.join）
+- 解决：
+  - ❌ `string.buffer(buf)` → ✅ `raw.tostring(buf)`（raw.buffer 对象转字符串）
+  - ❌ `io.size(path)` → ✅ `string.load(path)` 后 `#data`，或 `fsys.getFileSize`（lib/fsys 下）
+  - ❌ `fsys.getExtension(path)` → ✅ `fsys.getExtensionName(path)`（返回小写、不含点；`io.splitpath(path).ext` 含点且未转小写）
+  - ❌ `string.join(array, sep)` → ✅ `table.concat(array, sep)`
+- 教训：不确定的库函数先 `aalint --api <name>` 或 Grep `$AARDIO\lib\` 确认，禁止凭其他语言经验猜函数名（本坑 4 连踩）
+
+### 2026-09-23 bkplus 的 text 赋值后画面不重绘：text 是普通数据成员无 _set，窗口显示后再赋值必须手动 redraw()
+- 状态：已验证（读 bkplus.aardio 源码：metaProperty 定义了 background/foreground/hidden/visible 等 _set，唯独没有 text；模拟 CBN_SELCHANGE 实测：赋值后 .text 属性值已更新但画面不刷新，调用 redraw() 后正常）
+- 场景：生图工具用 bkplus 做动态尺寸标签（labelRatio.text 随下拉联动），启动时赋值正常（窗口 show 整体绘制一遍）而用户选择后不更新，误以为 onSelChange 没触发——事件实际正常
+- 根因：bkplus 是自绘控件，text 用于绘制（line 214/227）但 metaProperty 无 text 的 _set 处理——赋值只改数据不触发重绘；窗口 show 前赋值会被首次整体绘制覆盖生效，show 后赋值画面停留旧文字
+- 解决：❌ 以为 text 赋值自动生效（plus 控件的 text 有 setter 会重绘，两者行为不同）→ ✅ bkplus.text 赋值后手动调用 `ctrl.redraw()`（内部 redrawBackground 重建背景缓存，注释称不建议频繁调用——选择下拉等低频场景安全）
+- 排查技巧：模拟 combobox 用户选择给父窗口发 `::User32.SendMessage(parent.hwnd, 0x111/*_WM_COMMAND*/, ctrl.id | (1<<16), ctrl.hwnd)` 即可触发 onSelChange（SendMessageInt 不在 aardio 的 User32 声明里，用 SendMessage）
+- 教训：同一工具里 plus 和 bkplus 混用时，动态文字一律优先 plus；此前"参考图片标签不更新"疑似同一根因（当时误判为交互可发现性问题）
+
+### 2026-09-22 plus 控件 background 替换图片实测不泄漏：源码注释掉 dispose 不代表漏释放，弱表缓存 + 对象回收兜底
+- 状态：已验证（process.usage 实测：40 轮交替加载/清空 2048x2048 位图，进程提交内存 delta=0.0MB）
+- 场景：排查生图工具"二次保存闪退"时，读 plus.aardio 源码发现 background setter 中 `old.dispose()` 被注释掉、gdip.bitmap 无 _gc 析构（原生位图仅手动 delete 释放），据此推断"每次换图泄漏 16MB 原生内存"——推断被实测推翻
+- 根因：gdip.loadCachedBitmap 的 `__bmpCache` 是 `_weak="kv"` 弱引用表；plus 替换 background 后旧 gdip.bitmap 对象失去强引用，aardio 回收 aardio 侧对象时原生位图一并释放（或弱表失效后无复用）——**实测提交内存零增长**
+- 教训：读源码看到"资源释放调用被注释"先别下泄漏结论，弱引用缓存 + aardio 对象回收链路可能已兜底；**用 process.usage().mem().PrivateUsage 循环前后对比实测**再定论（lib/process/usage.aardio 现成可用）
+- 附 1：aardio.exe（IDE 引擎）为 32 位（x86），2GB 地址空间，评估内存问题前先确认位数（PowerShell 读 PE 头 machine 字段）
+- 附 2：fsys.dlg.save 连续调用 3 次（自动化回车确认）无崩溃，对话框本身稳定
+
+### 2026-09-22 aardio 类 ctor 默认参数对"显式传 null"生效（与多数语言不同）；raw.buffer(null) 抛脚本错
+- 状态：已验证（fsys.dlg.save 内部 bufSize 未定义解析为 null，若默认值不生效则 raw.buffer(null,...) 必抛「参数@1 期望 number 实际获取 null」——实际第一次保存正常完成，反推默认值生效）
+- 场景：审查 fsys.dlg.save 源码发现 `ofn = OPENFILENAME( bufSize,defFile )` 的 bufSize 是未定义变量（函数无此形参），在 namespace 内解析为 null；而 OPENFILENAME 的 ctor 签名是 `ctor(bufSize = 0x208, defFile)`——担心显式传 null 导致缓冲区 null/大小 -1 崩溃
+- 结论：aardio 类 ctor 默认参数在**实参为 null 时生效**（等同省略），传 null 不会覆盖默认值；raw.buffer(null,...) 才会抛脚本错（有报错弹窗，不是静默闪退）
+- 解决：判断"null 参数是否击穿默认值"可用反证法——若击穿则后续 raw.buffer 必抛脚本错，与实际现象（正常执行）矛盾即证默认值生效；或直接写最小类测试 `C(null).x`
+- 附：namespace 内引用未定义标识符解析为 null 不报错（报错发生在对 null 继续调用/取成员时，错误形如「不支持此操作:call ... 类型:null」）
+
+### 2026-09-22 读取环境变量的正确 API 是 string.getenv（win.getEnv 不存在）
+- 状态：已验证（aalint --run 实测：win.getEnv 报「不支持此操作:call method(table) 名字:'getEnv' 类型:null」；string.getenv("PATH") 正常返回 1708 字节，AGNES_API_KEY 正常读到 51 字节）
+- 场景：生图项目需要从环境变量 AGNES_API_KEY 读取 API Key，凭直觉写了 win.getEnv
+- 根因：aardio 的环境变量 API 内置在 string 库（lib/builtin/string.aardio 283-288 行，Kernel32.GetEnvironmentVariable 封装），叫 string.getenv(name)，不存在 win.getEnv/process.getEnv 等其他语言习惯的写法
+- 解决：❌ `win.getEnv("NAME")` → ✅ `string.getenv("NAME")`（内置 string 库免 import；变量不存在返回 null 而非空串，判空用 `if(v && #v)`）
+- 附：string.setenv 同库存在（SetEnvironmentVariable 封装）
+
+### 2026-09-22 aalint --ui-smoke 与 win.ui.simpleWindow（border="none" 自绘标题栏）组合必崩 0xC0000409，GUI 验证改用 --run + setTimeout 自关闭
+- 状态：已验证（排除法：纯窗口/simpleWindow PASS → 完整控件 PASS → 配置/orphanWindow/skin PASS → 同一程序 --run+自关闭完整跑通退出码 0，仅 --ui-smoke 稳定崩溃）
+- 场景：生图 GUI 项目冒烟测试，`--run --ui-smoke --timeout 12` 对 border="none" + win.ui.simpleWindow 自绘标题栏的主窗口返回空输出 + 退出码 -1073740791（0xC0000409 STATUS_STACK_BUFFER_OVERRUN）
+- 现象：程序自身无任何错误（--run --capture --timeout 正常跑完全部初始化并 PASS）；--ui-smoke 无 stdout 无报错只有崩溃码
+- 根因：aalint ui-smoke 模拟窗口交互的流程与 simpleWindow 自绘标题栏（无边框窗口）不兼容，属工具层限制而非程序 bug
+- 解决：❌ 依赖 --ui-smoke 验证此类 GUI → ✅ 在程序尾部临时加 `winform.setTimeout(function(){ winform.close(); },2000);` 后用 `--run --capture --timeout 12` 跑完整生命周期（show → loopMessage → 自动关闭），print 各初始化阶段输出定位问题；验证完删除自关闭代码
+- 教训：崩溃码 0xC0000409 先怀疑运行模式与窗口类型的兼容性，用组件排除法（纯窗口→控件→组件逐层叠加）区分"程序崩"还是"测试工具崩"
+
+### 2026-09-22 本机 aardio 无 string.pack 库，构造二进制测试数据用 raw.buffer
+- 状态：已验证（aalint --api string.pack 报未找到并提示 lib/string/pack.aardio 路径不存在；--run 实测 string.pack("<4",0x89,...) 报「参数@1 期望 number 实际 string」——该库在其他 aardio 版本/扩展库中，本机没有）
+- 场景：为 MIME 文件头判断写单元测试，需要构造 PNG/JPEG/WEBP/BMP 二进制头
+- 解决：❌ `string.pack("<4",0x89,0x50,...)`（凭其他语言经验）→ ✅ `var buf = raw.buffer(n); buf[1]=0x89; ...`（raw.buffer 创建可索引读写的字节缓冲，#buf 取长度，与字符串索引语义一致）
+- 附：真实的 PNG 测试文件可用 gdip.bitmap(w,h) + graphics.fillRectangle + bmp.save(path) 现生成，string.load 读回即为二进制字符串
 
 ### 2026-09-19 批量编辑声称成功但部分编辑静默丢失：用户实测暴露"按钮无事件、保存丢参数"，剥注释 diff 再次立功
 - 状态：已验证（用户实测排序无效 → 排查发现两处编辑未落盘 → 补齐后剥注释 diff 双文件 IDENTICAL + 编译 PASS）
@@ -117,6 +292,17 @@ AIGC:
 - 现象：调用 `..process.popen(...)` 报错「不支持此操作:call 定义类型:method(table) 名字:'popen' 类型:null」
 - 根因：dnsManager 顶部只有 `import process`，而 popen 是独立子库（lib/process/popen.aardio），须单独 `import process.popen` 才会在 process 命名空间注册 popen 成员。process.execute 在 process 主库本身就有，所以之前 flushDns 用 execute 一直没事，换 popen 就踩
 - 解决：❌ `import process;` 后直接用 `..process.popen` → ✅ 追加 `import process.popen;`
+- 泛化（2026-09-23 再次确认）：这条规则适用**一切 xxx.yyy 子模块**——fsys.table、win.ui.ctrl.edit、process.popen 同理；报错特征「不支持的此操作:call 调用成员:'yyy' 参数:null」= 十有八九是子模块没 import。新写单测/工具脚本时先抄主工程 import 区，或直接用 Select-String 确认目标 API 属主库还是子库；查库目录 lib/xxx/ 下有无独立文件最准（lib/fsys/table.aardio、lib/process/popen.aardio）
+
+### 2026-09-23 aalint --run 跑测试脚本带 console.pause() 必卡满超时窗口，无人值守下永不可见
+- 状态：已验证（test_msgbox_newline 带 pause --timeout 10 无输出卡满 10s，去 pause 后 EXIT=0 秒过；同日 test_ffmpeg_tail 又带 pause，两次 --run 均“无响应”到超时，用户体感“每次跑几十分钟”两次手动打断）
+- 场景：写单测脚本验证弹窗换行/ffmpeg 截帧，顺手写 console.log 输出 + console.pause() 留窗，用 aalint --run --timeout N 无人值守执行
+- 根因：console.pause() 等待用户按键，headless 下永远等不到，直到 --timeout 到点被杀；且 console.log 在 aalint --run 下输出也不可见，导致“静默卡到超时”双重视觉灾难
+- 解决：
+  - ❌ 测试脚本末尾 console.pause() → ✅ 测试结果一律 string.save(io.fullpath("/xxx_result.txt"), ...) 落盘，PowerShell 用 [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8) 读回（控制台默认 GBK 直接 Get-Content 会乱码）
+  - ❌ 靠 console.log 传结果 → ✅ 靠 assert 断言（失败会以 FAIL + 源码上下文中断，信息可靠）+ 落盘文本
+  - 排查思路：--run 长时间无输出先看脚本里有没有 pause 类等待函数，而不是怀疑被测代码慢
+- 教训：给无人值守执行器写测试脚本，默认无交互——任何“等输入”的调用（console.pause/io.read/msgbox）都是隐式挂死；测试时长体感异常（用户两次打断）时先自查测试脚本设计而不是换思路硬等
 
 ### 2026-09-15 Windows nslookup 对不存在的域名也返回退出码 0，不能靠退出码判断解析成败
 - 状态：已验证（实测：正常域名与不存在域名 nslookup 退出码均为 0）

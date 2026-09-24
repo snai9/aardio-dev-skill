@@ -3,10 +3,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: 'c6facf27-a407-4265-b87e-9f8c345ef322'
-  PropagateID: 'c6facf27-a407-4265-b87e-9f8c345ef322'
-  ReservedCode1: '4d625685-971d-4678-b22f-ece8f0aa3f7c'
-  ReservedCode2: '4d625685-971d-4678-b22f-ece8f0aa3f7c'
+  ProduceID: '49027856-f9f4-46b5-92b0-c15391c6eb86'
+  PropagateID: '49027856-f9f4-46b5-92b0-c15391c6eb86'
+  ReservedCode1: '2734a021-0508-4ce7-a6f1-682d93b53300'
+  ReservedCode2: '2734a021-0508-4ce7-a6f1-682d93b53300'
 ---
 
 # aardio 更新日志知识库（提炼层）
@@ -17,6 +17,7 @@ AIGC:
 > 噪音条目（"改进范例/文档/AI 助手"）不记。
 > 官方"只维护最新版本"，本文件按主题组织、随官方更新滚动维护。
 > 同步时机：每次 aardio IDE 更新后（并入 `.trae/rules/workflow.md` 第六章同步机制）。
+> **最后同步：2026-09-24，覆盖至官方 v44.3.0**（上次基准 v42.53.0）
 
 ---
 
@@ -38,6 +39,15 @@ AIGC:
 | `bencoding` | `bencode`（标准库） | v40.38.1 | 原 bencoding 移入扩展库 |
 | plus 控件自绘事件 `onDrawContent`/`onDrawForegroundEnd`/`onDrawEnd` | `onDrawForeground` / `onDrawComplete` | v42.38.2 | 旧事件名废弃（aardio-traps 技能 26.4 已记） |
 | `winform.onInitDialog` | `winform.ready` | v42.53.0 | onInitDialog 重定向到 ready |
+| `math.logBase` | `math.log(v[,base])` | v44.0.0 | log 可选指定底数 |
+| `math.atan2` | `math.atan(y[,x])` | v44.0.0 | atan 可选双参数 |
+| `time.istime` | `time.is` / `time.isStruct` | v43.33.0 | 旧名废弃 |
+| `graphics.fillRectangle/drawRectangle/path.addRectangle` | `graphics.fillRect/drawRect/path.addRect` | v43.21.0 | 旧名保留兼容别名，官方统一 ...Rect 命名风格（减少 AI 困惑）；新增 addCircle/fillCircle/drawCircle 同批 |
+| `raw.toarray` | `raw.array` | v43.4.1 | 旧名废弃 |
+| `fsys.attrib` | `fsys.attr` | v43.15.4 | 旧名仅兼容别名，不建议用 |
+| `string.indexOfBinary` | `string.indexOf`（支持二进制） | v43.0 | 废弃多余函数 |
+| `web.ui` / `win.animate` 库 | （无替代，功能并入他处） | v43.5.3 | 官方废弃 |
+| `begin ... end` 语句块 | 直接用 `{ }` 或行结构 | v43.0 | **关键字废弃**（AI 常误写成变量名，官方为此专门清理） |
 
 ## 新增库/函数精选（能用新解法就用）
 
@@ -80,7 +90,27 @@ AIGC:
 
 ### AI 相关（写 AI 应用时查）
 - `string.gpt.tokens`、`web.rest.embeddings`、aiChat 的 `listModels()`/`reasoning` 字段/图像 Data URL 直传（prompt 参数 2 传 buffer）
+- `web.rest.aiChat` responses 协议（v42.55.0）、默认超时：连接 15s/请求 30s/接收 600s（流式 60s，v43.11.1）、`onToolCallingError` 事件、`getText()` 直取回复
+- `web.rest.aiDecision`（v44.0.0，Jev 决策模型支持库）
+- 官方 AI 助手 autos.mcp 完整 MCP 协议支持 + MCP 自动转技能包（v43.29.0）；v44.3.0 AI 全面接入官网文档（MCP / LLMS.TXT）
 - AI 助手本身持续改进（官方重心），第三方 IDE 用户只需关注 web.rest.aiChat 库变化
+
+### v43~v44 新库精选（2026-09-24 同步，能用新解法就用）
+- **`fsys.openXml`**（v44.0.0）：纯 aardio 解析 Excel/Word/PPT 文件格式，不需要 Office、不调第三方组件（官方相关技能包已全部重构为使用它）；配套微软官方 DocumentFormat.OpenXML 扩展库（fsys.openXml 不依赖它）
+- **`process.dotnet`**（v44.1.3，v44.2.0 改进）：AI 自动写/调用 AutoCAD(C#) 插件，兼容旧 .NET Framework 与 .NET 8+（库位置变更，旧版 `\lib\process\dotnet.aardio` 需手工删除）
+- `com.cad`/`com.sldWorks` 大幅重构，**com.sldWorks 移入标准库**（v44.0.0）；支持在 AutoCAD 内执行 C# 脚本（v44.3.0）
+- `string.markdown.toDocx`（v43.32.1）：Markdown 原生导出 DOCX，不调 Office/COM/.NET；`string.markdown.toRtf` 渲染样式改进（v43.32.0）
+- `fsys.recycleBin`（v43.24.2）+ `fsys.delete(path,true)` 回收站删除 + `fsys.recycleBin.restoreLast()` 快速找回
+- `web.rest.client.download`（v44.1.3，快捷下载文件）；`web.rest.polyHaven`（v43.30.0）
+- `io.joinpath2`/`io.fullpath2`（v43.19.0）、`io.copy`/`io.move`（v43.18.1）、`io.createDir` 重写支持 `\\?\` 超长路径（v44.1.0）
+- `string.loadNumber`（v43.22.1）、`string.dump`（v43.15.4）、`string.replaceLiteral`/`fsys.replaceLiteral`（v43.11.0）、`string.findAny`（v43.9.0）、`string.fencedCodeBlock`
+- `console.report`（v43.11.0）、`console.attach()`、console 可临时禁用输出
+- `thread.acquire`（v43.12.2，跨线程读共享变量）、`thread.works.quit(超时)`
+- `winform.waitUntil`（v43.15.0）、`win.enumThread`、`win.net`、`win.getIdleTime` 改进
+- `zlib.unzip` 补充随机访问/只读模式/整读校验（v44.1.0）；`inet.httpFile` 自动修复无效文件名+校验常见文件头；`inet.setCookie/getCookie` 修正二次编码（v43.31.6）
+- `fsys.latest` 增加返回值 2,3（父目录、按时间排序的匹配文件名数组，v43.29.0）；`io.file.read` 支持自定义读取长度与选项、自动切换二进制/文本模式
+- 所有控件 `click` 函数（模拟点击，v43.9.0）；plus 控件 `snap()` 内存截图（v43.9.0）；`win.ui.listEdit` 的 `onItemChanged` 事件与 `onEditChanged` selText 参数
+- `win.ui.loadingMask`、`winex.loading.thinking()`（AI 思考动画窗口）；`inet.installer`（自动下载安装 MSI/EXE）
 
 ## 行为/语法变更（影响旧认知）
 
@@ -102,6 +132,23 @@ AIGC:
 | combobox 选项变更事件名 `onSelChange`；listbox/calendar/datetimepick 焦点事件 `onFocusGot/onFocusLost`（旧名自动重定向，不建议用） | v40.27.1 | 新代码用新事件名 |
 | `winform.close(true)` 异步关闭 | v37.8.27 | — |
 | `sys.reg.getValue`、`win.clip.write` 支持表对象自动序列化 | v37.23/38.5 | — |
+| **v43.0 内核更新**：旧版编译的代码/库/CGI 程序需重新编译一次 | v43.0 | 升级后先重编译 |
+| `string.format` 默认以 64 位格式化整数；`%d` 保留非字面量 -0 符号；新增 `%F`（不用科学计数法、去尾零） | v43.0/v44.0 | — |
+| `string.indexOf/lastIndexOf` 传 null/空串返回 null（旧版传 null 报错）；支持二进制 | v43.0 | 判空需注意 |
+| `table.concat` 至少 2 个表参数且必须都是表/数组；仅首参指定表时自动转调 `string.join` | v43.0 | **旧代码易踩** |
+| `table.clone/concat` 不再将纯数组转换为表 | v43.0 | — |
+| `??`/`?:` 自动替换为假值合并操作符 `:`；falsy 严格限制为 false/null/0 | v43.0 | 与本规则 2.9 一致 |
+| `tostring` 输出 10 进制安全整数不用科学计数法；JSON 数值解析/序列化优化 | v44.0.0 | — |
+| `com.nothing()` 新增；`com.Variant(value[,type])` 在 value=null 时保留 type（旧版强制 VT_NULL） | v44.0.0 | COM 编程注意 |
+| `math.dist/lerp/clamp` 提升为内置函数；`math.log(v[,base])`/`math.atan(y[,x])` 新签名 | v44.0.0 | — |
+| `gdip.pen` 默认使用世界坐标 | v43.18.2 | 绘图坐标认知变更 |
+| `inet.http/inet.whttp` 关闭重定向/3XX 且无输出时返回 `""`（旧版返回 null） | v43.0.5 | HTTP 返回值判断需更新 |
+| JSON/string.escape 转义不再把单引号转为 `\u0027` | v43.7.0 | — |
+| 模式匹配可用 `<@=...@>`/`<@...@>` 表示原样匹配片段 | v43.7.0 | — |
+| ARGB 颜色数值统一规范化为无符号 32 位整数 | v42.54.2 | 与 plus.skin 0xFF 前缀规则配合 |
+| `time.is()` 曾返回错误值已修复（v44.1.0）；time 格式串兼容带/不带 `%` | v44.1.0 | 升级后 time 相关 bug 注意 |
+| `richedit` 不再默认清零 langOptions，不必手动指定 | v43.32.0 | — |
+| winform/ctrl.setTimeout/setInterval 回调 owner 默认指向当前窗体/控件，回调参数仅用实际参数 | v42.53.0 | 计时器回调签名变更 |
 
 ## 使用规则（AI 助手必读）
 
