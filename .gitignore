@@ -14,3 +14,6 @@ tools/aalint/dist/
 tools/aalint/lib/
 # 华为 CodeArts 工具本地缓存（代码索引等，非项目内容）
 .codeartsdoer/
+
+# AI 会话中间产物（测试文件/截图等，不入库）
+.temp/
