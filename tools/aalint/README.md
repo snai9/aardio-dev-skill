@@ -1,3 +1,14 @@
+---
+AIGC:
+  ContentProducer: '001191110102MAD55U9H0F10002'
+  ContentPropagator: '001191110102MAD55U9H0F10002'
+  Label: '1'
+  ProduceID: '3f06c137-a7a4-4847-8f58-323f20d2dad9'
+  PropagateID: '3f06c137-a7a4-4847-8f58-323f20d2dad9'
+  ReservedCode1: '0a0ad2a4-74ac-4339-8a16-d4b331dd6046'
+  ReservedCode2: '0a0ad2a4-74ac-4339-8a16-d4b331dd6046'
+---
+
 # aalint — aardio 语法检查与运行工具
 
 ## 简介
@@ -10,11 +21,11 @@
 - 新增 `tools\verify.ps1` 与 `tests\fixtures\`，用于发布前回归验证
 
 **v2.0 新增**：
-- `--lint` / `-l`：**aardio 陷阱规则检测**，内置 12 条 aardio 专属规则（字符串拼接运算符、try-return 语义、三元 fallback 语义、双引号转义、namespace 前缀、未使用导入、内置名遮蔽、外语法习惯、for-in 单变量、thread.invoke 调用、io.file 链式误用、条件单等号）
+- `--lint` / `-l`：**aardio 陷阱规则检测**。2.4.1 起默认只启用经官方源码样本反查后较保守的规则；`--lint-all` 才启用启发式/实验规则，已确认不成立的旧规则保留 ID 但禁用
 - `--symbols` / `-s`：**符号提取/代码大纲**，输出文件中的 import、函数、变量、namespace 声明
 - `--imports` / `-i`：**依赖验证**，检查所有 import 语句能否解析到实际库文件（支持文件形式 `xxx.aardio` 和目录形式 `xxx\_.aardio`）
 - `--api` / `-a`：**标准库 API 查询**，解析库文件并输出函数签名、类、属性（同样支持两种库形式）
-- `--run --capture`：**输出捕获**，运行代码并捕获 stdout 输出（JSON 模式下放入 `output` 字段）
+- `--run --capture`：**输出捕获**，运行代码并捕获 stdout/stderr 与 console 输出（JSON 模式下放入 `output` 字段）
 - `--eval` / `-e`：**内联表达式求值**，快速验证 aardio 语法/API 行为
 - `--ai-guide`：**AI 使用指南**，输出适合编码代理读取的验证流程与命令选择规则
 - 所有新功能均支持 `--json` 输出和 `--dir` 递归
@@ -121,7 +132,7 @@ aalint --json --run --capture myfile.aardio
 ```
 
 > **capture 注意事项**：
-> - `--capture` 会捕获 `print()`、`console.write()`、`console.print()` 以及 `io.stdout.write()` 的输出（v2.3.0 起已统一拦截 console 库直写控制台句柄的输出）
+> - `--capture` 会捕获 `print()`、`console.write()`、`console.print()`、`console.log()`、`console.writeText()`、`console.error()` 以及 `io.stdout/io.stderr` 的输出；`console.writeColorText()` 最终经 `writeText()` 也可捕获
 > - `--capture-out <file>` 可把捕获内容写到指定文件且不自动删除，便于自动化取输出
 > - 写入换行符时应使用**单引号** `'\r\n'`（aardio 中单引号才解释转义序列），双引号 `"\r\n"` 会被当作字面文本
 
@@ -133,19 +144,21 @@ aalint --json --run --capture myfile.aardio
 >
 > **窗口事件烟测**：`--ui-smoke` 会在窗口创建后自动枚举该界面线程的子窗口，并向控件发送 `BM_CLICK` 与鼠标单击消息，用来暴露按钮 `oncommand`、plus/custom 控件点击回调里的运行时错误。与 `--run-isolated` 组合时，aalint 会在子进程内记录 `web.form` / `web.view` 对象，并尝试点击明显可点击的 DOM 元素（button、a、input button/submit、role=button、带 onclick 的元素）。web.form 的 COM 回调异常可能绕过普通 `onError`，因此网页 DOM 烟测放在隔离子进程内执行。它是自动化烟测，不会理解业务流程；复杂交互建议配合专门测试入口或测试脚本。
 >
-> **流程化界面测试**：`--ui-flow <json>` 只执行 JSON 文件中显式声明的步骤，适合真实业务界面，避免 `--ui-smoke` 自动点击所有控件造成不可预期副作用。支持 `setText/input/type`、`select`、`check`、`click`、`assertText/expectText/verifyText/assert`、`sleep/wait` 动作；目标控件可按 `text`、`contains`、`class/cls`、`id`、`index` 定位。例如：
+> **流程化界面测试**：`--ui-flow <json>` 只执行 JSON 文件中显式声明的步骤，适合真实业务界面，避免 `--ui-smoke` 自动点击所有控件造成不可预期副作用。支持 `setText/input/type`、`select`、`check`、`click`、`clickMessage`、`command`、`sendMessage/postMessage`、`close`、`assertText/expectText/verifyText/assert`、`assertExists/assertNotExists/assertVisible/assertEnabled/assertChecked`、`waitFor/waitGone`、`sleep/wait` 动作；目标控件可按 `text`、`contains`、`class/cls`、`id`、`index` 定位。例如：
 > ```json
 > {
 >   "steps": [
 >     { "action": "setText", "target": { "class": "Edit", "index": 1 }, "text": "alice" },
 >     { "action": "select", "target": { "class": "ComboBox", "index": 1 }, "index": 2 },
->     { "action": "click", "target": { "text": "提交" } },
+>     { "action": "clickMessage", "target": { "text": "提交" } },
+>     { "action": "waitFor", "target": { "contains": "处理完成" }, "timeout": 3000 },
 >     { "action": "assertText", "target": { "class": "Edit", "index": 2 }, "contains": "提交成功" }
 >   ]
 > }
 > ```
 >
 > **警告**：`--run` 会真实执行代码。如果代码中有 `string.save()`、网络请求等操作，**这些操作会真实发生**。请确保测试代码不包含危险的副作用。
+> **UI 回调异常建议**：官方内核文档指出，在 `fiber.create(..., appBaseDir)` 中创建窗口后若 fiber 因异常停止，后续窗口回调可能触发 `cannot resume fiber`。因此需要验证真实按钮回调异常时，优先使用 `--run-isolated --ui-flow`，让失败局限在子进程。
 
 ### 控制已打开的 aardio IDE
 
@@ -204,29 +217,30 @@ aalint --dir --lint E:\myproject
 aalint --json --lint myfile.aardio
 ```
 
-`--lint` 内置 13 条 aardio 专属规则，检测 AI 和新手最容易犯的错误：
+`--lint` 规则分三类：默认、实验、禁用。语法是否合法仍以 aardio 内核 `loadcode()` 为准；lint 只补充编译器不会主动提示的惯用法/语义陷阱。
 
-| 规则 ID | 检测内容 | 说明 |
-|---------|----------|------|
-| `str-plus` | `+` 拼接字符串 | aardio 中 `+` 对字符串报错，应用 `++` |
-| `try-return` | return 在 try 块内 | aardio 的 return 只退出 try 块，不退出函数 |
-| `dquote-escape` | `\"` 在双引号字符串中 | 双引号字符串中 `\"` 不转义而是关闭字符串，改用单引号或反引号 |
-| `ternary-fallback` | `?:` 真值分支可能落入 fallback | 真值分支为 `false`/`null` 或函数调用返回 `false`/`null` 时，会继续使用 fallback，关键逻辑应改用显式 `if/else` |
-| `global-dot` | namespace 内漏 `..` 前缀 | namespace 块内调用 `table.push` 等需 `..table.push` |
-| `unused-import` | import 了但未使用 | 死代码检测 |
-| `shadow-builtin` | 变量名遮蔽内置名 | 如 `string = ...` 会覆盖内置 string 对象 |
-| `foreign-idiom` | JS/Lua/其他语言写法 | 如 `?.`、`=>`、`pairs()`、`pcall()`、`finally`、`object:method()`、`~=` |
-| `for-in-key` | `for in` 单变量 | 单变量得到 key/index，不是 value |
-| `thread-invoke-call` | `thread.invoke(fn())` | 会传入函数返回值，应写 `thread.invoke(fn, arg1, arg2)` |
-| `io-file-chain` | `io.file(...).write(...).close()` | `write()` 返回值不是文件对象，不能继续 `.close()` |
-| `assign-in-cond` | `if/while` 条件单等号 | 通常是误写，应确认是否使用 `==`/`===` 或拆成赋值 |
-| `table-isarray` | `table.isArray()` 语义 | v39.0 起仅检测纯数组 `[]`；判断普通表是否数组请用 `table.isArrayLike` |
+| 规则 ID | 状态 | 检测内容 |
+|---------|------|----------|
+| `thread-invoke-call` | 默认 | `thread.invoke(fn())` 传入的是调用结果而非函数 |
+| `foreign-idiom` | 默认 | 高置信度外语言写法：`=>`、独立 `pairs/ipairs/pcall`、`finally`、`~=`；不再按字面 `?.` 报警 |
+| `try-return` | `--lint-all` | aardio `try/catch` 的 return 只退出 try；当前作用域判断仍属启发式 |
+| `global-dot` | `--lint-all` | namespace 中全局访问；`import global` 等情况会影响判断 |
+| `unused-import` | `--lint-all` | import 未见引用；可能存在初始化副作用 |
+| `ternary-fallback` | `--lint-all` | `?:` 的 true 分支为假值时会使用 fallback；官方源码也有大量有意用法 |
+| `shadow-builtin` | `--lint-all` | 局部变量覆盖常用内置名；官方库自身也会这样写，只作风格提示 |
+| `assign-in-cond` | `--lint-all` | 条件中的单 `=`；aardio 在无歧义等式中可按 `==` 处理，官方源码存在合法用法 |
+| `table-isarray` | `--lint-all` | `table.isArray` 是精确检测 pure-array 的正常 API，仅提示语义差异 |
+| `str-plus` | 禁用 | 旧规则与 aardio `+` 的字符串字面量语义冲突，且变量类型无法可靠静态推断 |
+| `dquote-escape` | 禁用 | 双引号为 raw string，旧逐行规则容易误判路径与结束引号 |
+| `for-in-key` | 禁用 | 泛型 for 可遍历任意迭代器，单变量并不总是 table key |
+| `io-file-chain` | 禁用 | 官方 `ioFileObject.write()` 成功返回对象自身，链式 `.write(...).close()` 合法 |
 
-输出示例：
-```
-  WARN  E:\myproject\main.aardio (2 条警告)
-         L42  str-plus: 可能用 + 拼接字符串，aardio 中应使用 ++
-         L87  try-return: return 位于 try 块内，不会退出函数（aardio try-catch 语义）
+```batch
+# 保守规则
+aalint --lint myfile.aardio
+
+# 连同实验规则一起检查
+aalint --lint-all --lint myfile.aardio
 ```
 
 ### 符号提取（--symbols）
@@ -267,6 +281,7 @@ aalint --dir --imports E:\myproject
 ```
 
 检查所有 `import` 语句能否解析到实际的 `.aardio` 库文件，并显示解析路径。未找到的标记为 `MISSING`。
+2.4.1 会向父目录查找 `.aproj` 来确定 AppRoot；找不到工程文件时使用源文件所在目录。可用 `--root <path>` 显式覆盖。`--imports` 会在这个 AppRoot 中调用 aardio 官方 `io.libpath()` 解析库，而不是自行猜测库文件路径。
 
 aardio 的 `import` 支持两种库形式，`--imports` 和 `--api` 都会同时检查：
 | 形式 | 文件结构 | 示例 |
@@ -286,6 +301,8 @@ aardio 的 `import` 支持两种库形式，`--imports` 和 `--api` 都会同时
 ```
 
 ### 标准库 API 查询（--api）
+
+2.4.1 起，如果 `aalint.exe` 不在 aardio 安装目录，会尝试通过官方 `process.aardio.getDir()` 定位已安装的 aardio 标准库源码。
 
 ```batch
 # 查询 web.view 库的公开 API
@@ -382,7 +399,7 @@ aalint --json --dir E:\myproject > report.json
     "pass": true,
     "stage": "lint",
     "warnings": [
-      { "line": 42, "id": "str-plus", "message": "可能用 + 拼接字符串，aardio 中应使用 ++" }
+      { "line": 42, "id": "thread-invoke-call", "message": "thread.invoke(fn()) 会传入返回值；请写 thread.invoke(fn, arg1, arg2)" }
     ]
   },
   {
@@ -535,10 +552,10 @@ aalint --version
 ### Lint 输出示例
 
 ```
-  WARN  E:\myproject\main.aardio (3 条警告)
-         L42  str-plus: 可能用 + 拼接字符串，aardio 中应使用 ++
-         L87  try-return: return 位于 try 块内，不会退出函数（aardio try-catch 语义）
-         L105 unused-import: 导入了 web.rest.jsonLite 但未使用
+  WARN  E:\myproject\main.aardio (1 条警告)
+         L42  thread-invoke-call: thread.invoke(fn()) 会传入返回值；请写 thread.invoke(fn, arg1, arg2)
+
+  # 若使用 --lint-all，才可能额外看到 try-return / unused-import 等实验提示
 ```
 
 ### Symbols 输出示例
@@ -603,7 +620,7 @@ line2
   -------------
 ```
 
-> capture 捕获 `print()` / `console.write()` / `console.print()` / `io.stdout.write()` 的全部输出（v2.3.0 起）。代码中写换行符应使用单引号 `'\r\n'`，双引号 `"\r\n"` 不会被解释为换行。
+> capture 捕获 `print()` / `console.write()` / `console.print()` / `console.log()` / `console.writeText()` / `console.error()` / `io.stdout` / `io.stderr` 输出。代码中写换行符应使用单引号 `'\r\n'`，双引号 `"\r\n"` 不会被解释为换行。
 
 ### JSON 输出示例
 
@@ -621,7 +638,7 @@ line2
     "pass": true,
     "stage": "lint",
     "warnings": [
-      { "line": 42, "id": "str-plus", "message": "可能用 + 拼接字符串，aardio 中应使用 ++" }
+      { "line": 42, "id": "thread-invoke-call", "message": "thread.invoke(fn()) 会传入返回值；请写 thread.invoke(fn, arg1, arg2)" }
     ]
   },
   {
@@ -670,3 +687,5 @@ line2
   }
 ]
 ```
+
+> AI生成

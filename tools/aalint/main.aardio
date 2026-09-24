@@ -1,11 +1,12 @@
-_VERSION = "2.4.0";
+_VERSION = "2.4.1";
 var exitCode = 0;
 
 // ─── 全局错误钩子：阻止弹窗 ───
 ..onError = function(err){
     io.stderr.write(tostring(err), '\r\n');
     io.stderr.flush();
-    return true;
+    // 已由 aalint 输出；按内核约定返回 null 可抑制默认错误处理器再次输出/弹窗。
+    return null;
 };
 
 // ─── lint 需要的额外库 ───
@@ -83,7 +84,8 @@ var printHelp = function(){
     writeOut("  aalint --fix <file>                  自动修复常见 API 错误");
     writeOut("  aalint --fix --dry-run <file>        预览修复效果（不实际修改文件）");
     writeOut("  aalint --dir --fix <directory>       递归修复目录下所有 .aardio 文件");
-    writeOut("  aalint --lint <file>                 aardio 陷阱规则检测");
+    writeOut("  aalint --lint <file>                 aardio 高置信度陷阱规则检测");
+    writeOut("  aalint --lint-all <file>             同时启用实验性 lint 规则");
     writeOut("  aalint --dir --lint <directory>      递归 lint 目录");
     writeOut("  aalint --symbols <file>              提取符号大纲（import/函数/变量）");
     writeOut("  aalint --imports <file>              依赖验证（检查 import 可解析性）");
@@ -102,6 +104,7 @@ var printHelp = function(){
     writeOut("  aalint --run --snapshot-delay 3000 <f> 快照导出延迟毫秒数(默认3000)");
     writeOut("  aalint --eval <expr>                 内联表达式求值");
     writeOut("  aalint --ai-guide                    输出 AI 使用 aalint 的推荐验证流程");
+    writeOut("  aalint --root <path> <file>          显式指定应用程序基准目录(AppRoot)");
     writeOut("  aalint --lib <path> --run <file>     添加自定义库目录（附加模式）");
     writeOut("  aalint --lib-only <path> --run <file> 仅使用指定库目录");
     writeOut("  aalint --ignore <pattern>            排除匹配模式的文件（可多次指定）");
@@ -131,6 +134,7 @@ var printAiGuide = function(){
     writeOut("  aalint --lint <file>                       检查 aardio 常见陷阱");
     writeOut("  aalint --symbols <file>                    快速理解 import/函数/变量");
     writeOut("  aalint --imports <file>                    验证 import 是否可解析");
+    writeOut("  aalint --root <project> <file>             明确指定工程 AppRoot（子目录源码/资源路径场景）");
     writeOut("  aalint --api <lib.name>                    查询标准库 API 签名");
     writeOut(`  aalint --eval "expr"                      快速验证语法或小 API 行为`);
     writeOut("  aalint --run --timeout 5 <file>            执行短生命周期代码");
@@ -160,7 +164,8 @@ var printAiGuide = function(){
     writeOut("边界:");
     writeOut("  --run 会真实执行代码；避免在测试入口中放网络、删除、付款、发布等危险副作用。");
     writeOut("  --ui-smoke 是烟测，不理解业务流程；复杂交互请使用 --ui-flow 或专门测试入口。");
-    writeOut("  --ui-flow 需要校验控件输出时使用 assertText/expectText，并用 contains 或 text/equals/value 断言。");
+    writeOut("  --ui-flow 支持 waitFor/waitGone/assertExists/assertNotExists/assertVisible/assertEnabled/assertChecked，便于验证按钮触发后的异步界面。");
+    writeOut("  --ui-flow 的 contains 是纯文本包含，不使用 aardio 模式匹配。");
 };
 
 // ─── JSON 结果收集 ───
@@ -264,6 +269,15 @@ var formatAardioError = function(err){
             s = s + '\n---------------------------------------------------\n提示: 请先用代码 import '+name+'; 导入 '+name+' 库。';
         }
     }
+    elseif(fields["Attempt to"] == "call" && fields["Kind"] == "method(table)" && fields["Type"] == "null"){
+        var methodName = fields["Name"] ? string.trim(fields["Name"],"'") : null;
+        if(methodName == "inputBox"){
+            s = s + '\n---------------------------------------------------\n提示: 请先调用 import win.inputBox; 导入库。';
+        }
+        elseif(methodName == "inputbox"){
+            s = s + '\n---------------------------------------------------\n提示: 正确的方法名是 inputBox，并请先 import win.inputBox;';
+        }
+    }
     return s;
 };
 
@@ -292,6 +306,54 @@ var splitLines = function(code){
     return string.splitEx(code);
 };
 
+// ─── 应用程序基准目录(AppRoot)解析 ───
+// aardio 工程运行时以工程根目录作为 AppRoot；工程外独立文件则以文件所在目录作为 AppRoot。
+// fiber.create(func, appBaseDir) 会同时改变应用程序基准目录与用户库目录。
+var _forcedAppRoot = null;
+
+var _dirHasAproj = function(dir){
+    if(!dir || !io.exist(dir)) return false;
+    var found = false;
+    fsys.enum(dir, "*.aproj",
+        function(dirname, filename, fullpath, findData){
+            if(filename){
+                found = true;
+                return false;
+            }
+        }, false
+    );
+    return found;
+};
+
+var resolveAppRoot = function(filePath){
+    if(_forcedAppRoot) return _forcedAppRoot;
+    var fullPath = io.fullpath(filePath);
+    var dir = io.splitpath(fullPath).dir;
+    var cur = dir;
+    for(_rootDepth=1; 64; 1){
+        if(!cur || !#cur) break;
+        if(_dirHasAproj(cur)) return cur;
+        var parent = fsys.getParentDir(cur);
+        if(!parent || parent == cur) break;
+        cur = parent;
+    }
+    return dir;
+};
+
+// 只编译、不执行；在目标 AppRoot 纤程中调用官方 loadcode()，避免 /res、$/lib 等
+// 因 aalint 自身 AppRoot 不同而产生假错误。
+var compileFileAtRoot = function(fullPath){
+    var appRoot = resolveAppRoot(fullPath);
+    var task = function(path){
+        var func, err = loadcode(path);
+        fiber.yield({pass = func ? true : false; err = err});
+    };
+    var f = fiber.create(task, appRoot);
+    var ok, result = fiber.resume(f, fullPath);
+    if(!ok || !result) return false, result;
+    return result.pass, result.err;
+};
+
 // ─── ignore 模式匹配 ───
 var isIgnored = function(filePath, patterns){
     if(!patterns || #patterns == 0) return false;
@@ -305,81 +367,166 @@ var isIgnored = function(filePath, patterns){
 // ─── LINT：aardio 专属陷阱规则检测 ────────────────
 // ═══════════════════════════════════════════════════
 
-var _stripLintLiterals = function(line){
+// aardio 专用的 lint 代码遮罩。
+// 只负责区分“可执行代码”与字符串/注释，不尝试重新实现 aardio parser。
+// 支持：双引号 raw string（"" 表示原始引号）、反引号 raw string（``）、
+// 单引号转义字符串，以及首尾星号数必须匹配的 /*...*/ / /***...***/。
+var _sanitizeLintLines = function(lines){
     var dq = string.char(0x22);
     var sq = string.char(0x27);
     var bt = string.char(0x60);
     var bs = string.char(0x5C);
     var slash = string.char(0x2F);
-    var out = "";
+    var star = string.char(0x2A);
     var quote = null;
-    var i = 1;
-    var lineLen = #line;
+    var blockStars = 0;
+    var templateMode = false;
+    var templateRaw = false;
+    var outLines = {};
 
-    while(i <= lineLen){
-        var ch = string.slice(line, i, i);
-        var nextCh = "";
-        if(i < lineLen) nextCh = string.slice(line, i + 1, i + 1);
+    // 官方源码说明：只有源码首个非空白内容以 <? 或 ?> 开始时才启用模板语法。
+    // ?> 表示先进入原文；<? 表示先进入 aardio 代码。<?xml 不是合法 aardio 模板开始标记。
+    for(_fi=1; #lines; 1){
+        var first = string.trim(lines[_fi] : "");
+        if(#first){
+            if(string.startWith(first,"<?") || string.startWith(first,"?>")) templateMode = true;
+            break;
+        }
+    }
 
-        if(quote){
-            out ++= " ";
-            if(quote == sq and ch == bs and i < lineLen){
+    var isAsciiLetter = function(ch){
+        if(!ch || !#ch) return false;
+        return string.indexOf("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",ch) ? true : false;
+    };
+
+    for(_li=1; #lines; 1){
+        var line = lines[_li] : "";
+        var out = "";
+        var i = 1;
+        var lineLen = #line;
+
+        while(i <= lineLen){
+            var ch = string.slice(line, i, i);
+            var nextCh = (i < lineLen) ? string.slice(line, i + 1, i + 1) : "";
+            var thirdCh = (i + 1 < lineLen) ? string.slice(line, i + 2, i + 2) : "";
+
+            // 模板原文：直到独立的 <?。<?xml 按普通原文处理。
+            if(templateRaw){
+                if(ch == "<" && nextCh == "?" && !isAsciiLetter(thirdCh)){
+                    out ++= "  ";
+                    i += 2;
+                    templateRaw = false;
+                    continue;
+                }
                 out ++= " ";
-                i += 2;
+                i++;
                 continue;
             }
-            if(quote == dq and ch == dq){
-                if(nextCh == dq){
+
+            if(blockStars > 0){
+                if(ch == star){
+                    var j = i;
+                    while(j <= lineLen && string.slice(line,j,j) == star) j++;
+                    var starCount = j - i;
+                    if(starCount == blockStars && j <= lineLen && string.slice(line,j,j) == slash){
+                        for(_sp=1; starCount + 1; 1) out ++= " ";
+                        i = j + 1;
+                        blockStars = 0;
+                        continue;
+                    }
+                }
+                out ++= " ";
+                i++;
+                continue;
+            }
+
+            if(quote){
+                out ++= " ";
+                // 单引号是编译时转义字符串，反斜杠只在此类字符串中参与转义。
+                if(quote == sq && ch == bs && i < lineLen){
                     out ++= " ";
                     i += 2;
                     continue;
                 }
-                quote = null;
-            } elseif(quote == sq and ch == sq){
-                quote = null;
-            } elseif(quote == bt and ch == bt){
-                quote = null;
+                // 双引号/反引号是 raw string，重复定界符表示字符串内部的原始定界符。
+                if((quote == dq || quote == bt) && ch == quote && nextCh == quote){
+                    out ++= " ";
+                    i += 2;
+                    continue;
+                }
+                if(ch == quote) quote = null;
+                i++;
+                continue;
             }
-            i += 1;
-            continue;
-        }
 
-        if(ch == slash and nextCh == slash) break;
-        if(ch == dq or ch == sq or ch == bt){
-            quote = ch;
-            out ++= " ";
-            i += 1;
-            continue;
-        }
+            // 行注释以及“赋值右侧的行注释字符串”对 lint 都属于非代码区域。
+            if(ch == slash && nextCh == slash){
+                while(i <= lineLen){ out ++= " "; i++; }
+                break;
+            }
 
-        out ++= ch;
-        i += 1;
+            // 块注释/块原文字符串：记录 / 后连续 * 数量，结束标记必须同数目。
+            if(ch == slash && nextCh == star){
+                var j2 = i + 1;
+                while(j2 <= lineLen && string.slice(line,j2,j2) == star) j2++;
+                blockStars = j2 - (i + 1);
+                for(_sp2=1; blockStars + 1; 1) out ++= " ";
+                i = j2;
+                continue;
+            }
+
+            if(ch == dq || ch == sq || ch == bt){
+                quote = ch;
+                out ++= " ";
+                i++;
+                continue;
+            }
+
+            if(templateMode){
+                // 初始 <? 以及代码段开始标记本身不是 aardio 代码。
+                if(ch == "<" && nextCh == "?" && !isAsciiLetter(thirdCh)){
+                    out ++= "  ";
+                    i += 2;
+                    continue;
+                }
+                // aardio 代码中的 ?> 切换到模板原文。
+                if(ch == "?" && nextCh == ">"){
+                    out ++= "  ";
+                    i += 2;
+                    templateRaw = true;
+                    continue;
+                }
+            }
+
+            out ++= ch;
+            i++;
+        }
+        table.push(outLines, out);
     }
-
-    return out;
+    return outLines;
 };
+
+// 兼容单行调用；真正 lintFile 使用 _sanitizeLintLines 保持跨行状态。
+var _stripLintLiterals = function(line){
+    var t = _sanitizeLintLines({line});
+    return t[1] : "";
+};
+
+var _lintIncludeExperimental = false;
 
 // 规则定义：每条规则 {id, desc, check(lineText, lineNo, allLines)} => warning string or null
 var _lintRules = {
     // 规则1: str-plus — 用 + 拼接字符串（应使用 ++）
     {
         id = "str-plus";
-        desc = "可能用 + 拼接字符串，aardio 中应使用 ++";
-        check = function(line, lineNo, allLines){
-            var codeLine = _stripLintLiterals(line);
-            if(string.match(codeLine, `^\s*//`)) return null;
-            if(!string.indexOf(codeLine, "+")) return null;
-            if(string.match(line, `"[^"]*"\s*\+\s*"`)) return "可能用 + 拼接字符串，aardio 中应使用 ++";
-            if(string.match(line, `"[^"]*"\s*\+\s*'`)) return "可能用 + 拼接字符串，aardio 中应使用 ++";
-            if(string.match(line, `'[^']*'\s*\+\s*"`)) return "可能用 + 拼接字符串，aardio 中应使用 ++";
-            if(string.match(line, `\w+\s*\+\s*"`) and !string.match(line, `\d+\s*\+\s*"`)) return "可能用 + 拼接字符串，aardio 中应使用 ++";
-            if(string.match(line, `"\w*[^"]*"\s*\+\s*\w+`) and !string.match(line, `"\s*\+\s*\d+`)) return "可能用 + 拼接字符串，aardio 中应使用 ++";
-            return null;
-        }
+        disabled = true; // 引号相邻 + 在 aardio 中会自动按字符串连接处理；变量类型又无法可靠静态推断
+        desc = "旧 str-plus 规则已禁用：仅凭源码无法可靠推断 + 的运行时字符串/数值语义";
+        check = function(line, lineNo, allLines){ return null; }
     };
     // 规则2: try-return — return 在 try 块内不会退出函数
     {
         id = "try-return";
+        experimental = true; // 语义正确，但当前仅启发式判断 try 作用域
         desc = "return 位于 try 块内，不会退出函数";
         check = function(line, lineNo, allLines){
             var codeLine = _stripLintLiterals(line);
@@ -409,29 +556,19 @@ var _lintRules = {
     // 规则3: dquote-escape — \" 在双引号字符串中不转义
     {
         id = "dquote-escape";
-        desc = '" 在双引号字符串中不转义而是关闭字符串，改用单引号或反引号';
-        check = function(line, lineNo, allLines){
-            if(string.match(line, `^\s*//`)) return null;
-            var escQuotePos = string.indexOf(line, string.char(0x5C, 0x22));
-            if(escQuotePos){
-                var afterQuote = string.slice(line, escQuotePos + 2);
-                var nextChar = "";
-                if(afterQuote) nextChar = string.slice(afterQuote, 1, 1);
-                if(nextChar && !string.indexOf(' ,;)]}+`', nextChar)){
-                    return '" 在双引号字符串中不转义，而是关闭字符串，改用单引号或反引号';
-                }
-            }
-            return null;
-        }
+        disabled = true; // aardio 双引号 raw string 中 \" 可能只是路径反斜杠 + 结束引号，旧规则会误报
+        desc = '旧 dquote-escape 规则已禁用：双引号为 raw string，逐行猜测 \" 容易误判';
+        check = function(line, lineNo, allLines){ return null; }
     };
     // 规则4: ternary-fallback — ?: 真值分支为 false/null 或函数调用时可能落入 fallback
     {
         id = "ternary-fallback";
+        experimental = true; // 语义成立，但官方源码中也大量有意使用；默认关闭以避免 Agent 被噪音带偏
         desc = "?: 的真值分支为 false/null 或可能返回 false/null，会落入 fallback 分支";
         check = function(line, lineNo, allLines){
             var codeLine = _stripLintLiterals(line);
             if(string.match(codeLine, `^\s*//`)) return null;
-            var qStart = string.find(codeLine, "?");
+            var qStart = string.indexOf(codeLine, "?");
             if(!qStart) return null;
             var afterQuestion = string.trim(string.slice(codeLine, qStart + 1));
             var colonPos = string.indexOf(afterQuestion, ":");
@@ -457,6 +594,7 @@ var _lintRules = {
     // 规则5: global-dot — namespace 块内漏 .. 前缀
     {
         id = "global-dot";
+        experimental = true; // namespace 可无大括号且 import global 会改变查找规则，先作为实验规则
         desc = "namespace 块内调用全局函数可能缺少 .. 前缀";
         check = function(line, lineNo, allLines){
             if(string.match(line, `^\s*//`)) return null;
@@ -480,6 +618,7 @@ var _lintRules = {
     // 规则6: unused-import — import 了但未使用
     {
         id = "unused-import";
+        experimental = true; // import 可能仅依赖初始化副作用
         desc = "导入了但未使用的库";
         check = function(line, lineNo, allLines){
             return null;
@@ -488,6 +627,7 @@ var _lintRules = {
     // 规则7: shadow-builtin — 变量名遮蔽内置名
     {
         id = "shadow-builtin";
+        experimental = true; // 官方库自身也会局部遮蔽（例如 process.popen 的 var time），属于风格提示
         desc = "变量名遮蔽内置名称";
         check = function(line, lineNo, allLines){
             if(string.match(line, `^\s*//`)) return null;
@@ -511,19 +651,17 @@ var _lintRules = {
             var codeLine = _stripLintLiterals(line);
             var trimmed = string.trim(codeLine);
             if(string.startWith(trimmed, "//")) return null;
-            if(string.indexOf(codeLine, "?.")){
-                return "aardio 不支持 JS optional chaining `?.`，请改用显式判断或 `[[]]`";
-            }
+            // 不检查 `?.`：aardio 官方源码存在 `#?..` 等合法组合，字面搜索会误报。
             if(string.indexOf(codeLine, "=>")){
                 return "aardio 不支持 JS 箭头函数 `=>`，请使用 function 或 lambda";
             }
-            if(string.findAny(codeLine, {"pairs\(";"pairs \("})){
+            if(string.match(codeLine, `(^|\W)pairs\s*\(`)){
                 return "aardio 不使用 Lua pairs，遍历表请用 for(k, v in tab)";
             }
-            if(string.findAny(codeLine, {"ipairs\(";"ipairs \("})){
+            if(string.match(codeLine, `(^|\W)ipairs\s*\(`)){
                 return "aardio 不使用 Lua ipairs，遍历数组请用 for(i, v in arr)";
             }
-            if(string.findAny(codeLine, {"pcall\(";"pcall \("})){
+            if(string.match(codeLine, `(^|\W)pcall\s*\(`)){
                 return "aardio 不使用 Lua pcall，异常处理请用 try/catch 或 call";
             }
             if(string.startWith(trimmed, "finally") or string.indexOf(codeLine, "} finally")){
@@ -536,29 +674,15 @@ var _lintRules = {
                     return "aardio 不等号是 !=（不是 Lua 的 ~=）";
                 }
             }
-            if(string.match(codeLine, `\w+\s*\:\s*\w+\s*\(`)){
-                return "aardio 方法调用不是 object:method()，请确认是否应使用 object.method()";
-            }
             return null;
         }
     };
     // 规则9: for-in-key — for in 单变量得到 key/index，不是 value
     {
         id = "for-in-key";
-        desc = "for in 单变量得到 key/index";
-        check = function(line, lineNo, allLines){
-            var codeLine = _stripLintLiterals(line);
-            var trimmed = string.trim(codeLine);
-            if(string.startWith(trimmed, "//")) return null;
-            if(!string.startWith(trimmed, "for")) return null;
-            if(!string.indexOf(trimmed, " in ")) return null;
-            if(string.indexOf(trimmed, ",")) return null;
-            if(string.match(trimmed, `^for\s*\(\s*\w+\s+in\s+`)
-                or string.match(trimmed, `^for\s+\w+\s+in\s+`)){
-                return "for in 只写一个变量时得到 key/index；若需要值请写 for(i, v in tab)";
-            }
-            return null;
-        }
+        disabled = true; // 只对直接遍历 table 成立；process.each/winex.each 等迭代器单变量就是第一个返回值
+        desc = "旧 for-in-key 规则已禁用：单变量得到的是迭代器第一个返回值，不一定是 key";
+        check = function(line, lineNo, allLines){ return null; }
     };
     // 规则10: thread-invoke-call — thread.invoke(fn()) 会传返回值
     {
@@ -578,22 +702,14 @@ var _lintRules = {
     // 规则11: io-file-chain — io.file(...).write(...).close() 链式调用错误
     {
         id = "io-file-chain";
-        desc = "io.file(...).write(...).close() 链式调用错误";
-        check = function(line, lineNo, allLines){
-            var codeLine = _stripLintLiterals(line);
-            var trimmed = string.trim(codeLine);
-            if(string.startWith(trimmed, "//")) return null;
-            if(string.indexOf(codeLine, "io.file")
-                and string.indexOf(codeLine, ".write(")
-                and string.indexOf(codeLine, ".close(")){
-                return "io.file(...).write(...) 返回值不是文件对象，不能继续 .close()；请保存文件对象或用 io.file.write";
-            }
-            return null;
-        }
+        disabled = true; // 官方 ioFileObject.write() 成功返回对象自身，可合法链式调用
+        desc = "旧 io-file-chain 规则已禁用：官方 ioFileObject.write() 成功返回对象自身，允许链式调用";
+        check = function(line, lineNo, allLines){ return null; }
     };
     // 规则12: assign-in-cond — if/while 条件中的单等号通常是误写
     {
         id = "assign-in-cond";
+        experimental = true; // aardio 官方源码大量有意使用单 = 等式，编译器会在无歧义时按 == 处理
         desc = "if/while 条件中出现单等号";
         check = function(line, lineNo, allLines){
             var codeLine = _stripLintLiterals(line);
@@ -618,7 +734,7 @@ var _lintRules = {
                 return null;
             }
             if(string.match(cond, `^\w+\s*=\s*`)){
-                return "if/while 条件中出现单等号；请确认是否应使用 ==/=== 或拆成赋值语句";
+                return "if/while 条件中出现单等号；aardio 在无歧义等式中可自动视为 ==，但官方建议显式写 ==/===";
             }
             return null;
         }
@@ -626,6 +742,7 @@ var _lintRules = {
     // 规则13: table-isarray — table.isArray 仅检测纯数组（v39.0 起语义变更）
     {
         id = "table-isarray";
+        experimental = true; // table.isArray 是官方精确检测 pure-array 的正常 API，仅在误解语义时才需要提醒
         desc = "table.isArray 仅检测纯数组，判断普通表是否数组请用 table.isArrayLike";
         check = function(line, lineNo, allLines){
             var codeLine = _stripLintLiterals(line);
@@ -658,32 +775,28 @@ var lintFile = function(filePath, ignorePatterns){
 
     var warnings = {};
 
-    // 逐行逐规则检查
-    var inBlockText = false;
-    for(i=1; #lines; 1){
-        var line = lines[i];
-        if(inBlockText){
-            if(string.indexOf(line, "*/")) inBlockText = false;
-            continue;
-        }
-        if(string.indexOf(line, "/*")){
-            if(!string.indexOf(line, "*/")) inBlockText = true;
-            continue;
-        }
+    // 先按 aardio 自己的字符串/注释规则生成“仅代码”视图，跨行状态不会丢失。
+    var codeLines = _sanitizeLintLines(lines);
+
+    // 逐行逐规则检查。disabled 永不执行；experimental 默认关闭，可用 --lint-all 开启。
+    for(i=1; #codeLines; 1){
+        var line = codeLines[i];
         for(r=1; #_lintRules; 1){
             var rule = _lintRules[r];
+            if(rule.disabled) continue;
+            if(rule.experimental && !_lintIncludeExperimental) continue;
             if(rule.id == "unused-import") continue;
-            var warn = rule.check(line, i, lines);
+            var warn = rule.check(line, i, codeLines);
             if(warn){
                 table.push(warnings, {line=i; id=rule.id; message=warn});
             }
         }
     }
 
-    // unused-import: 全文件分析
+    // unused-import: 全文件分析（实验规则）
     var importNames = {};
-    for(i=1; #lines; 1){
-        var line = lines[i];
+    if(_lintIncludeExperimental) for(i=1; #codeLines; 1){
+        var line = codeLines[i];
         var m = string.match(line, `^\s*import\s+([\w\.]+)`);
         if(m){
             var shortName = m;
@@ -696,9 +809,9 @@ var lintFile = function(filePath, ignorePatterns){
         var impInfo = importNames[imp];
         var used = false;
         var searchPattern = `(^|\W)` ++ impInfo.short ++ `(\W|$)`;
-        for(i=1; #lines; 1){
+        for(i=1; #codeLines; 1){
             if(i == impInfo.line) continue;
-            var line = lines[i];
+            var line = codeLines[i];
             if(string.match(line, searchPattern)){
                 used = true;
                 break;
@@ -852,46 +965,48 @@ var checkImports = function(filePath, ignorePatterns){
     }
 
     var code = string.load(fullPath);
-    var pathInfo = io.splitpath(fullPath);
-    var projectLibDir = pathInfo.dir ++ "\lib\";
-    var aalintDir = fsys.getExeDir();
-    var stdlibDir = aalintDir ++ "\lib\";
+    var projectRoot = resolveAppRoot(fullPath);
 
     var importEntries = {};
     var lines = splitLines(code);
+    var importCodeLines = _sanitizeLintLines(lines);
+    var importNames = {};
 
-    for(i=1; #lines; 1){
-        var line = lines[i];
+    for(i=1; #importCodeLines; 1){
+        var line = importCodeLines[i];
         var impName = string.match(string.trim(line), `^import\s+([\w\.]+)`);
         if(impName){
-            // aardio import 解析两种形式:
-            //   1. xxx.aardio 文件 (如 fsys.aardio)
-            //   2. xxx\_.aardio 目录 (如 web\view\_.aardio)
-            var relPathFile = string.replace(impName, `\.`, "\\") ++ ".aardio";
-            var relPathDir = string.replace(impName, `\.`, "\\") ++ "\\_.aardio";
-            var resolved = null;
-
-            // 优先级1: 项目 lib/ (文件形式)
-            var projectFilePath = projectLibDir ++ relPathFile;
-            if(io.exist(projectFilePath)) resolved = projectFilePath;
-            // 优先级1b: 项目 lib/ (目录形式)
-            if(!resolved){
-                var projectDirPath = projectLibDir ++ relPathDir;
-                if(io.exist(projectDirPath)) resolved = projectDirPath;
+            // import global 是语言级特殊导入，不是磁盘上的 global 库。
+            if(impName == "global"){
+                table.push(importEntries, {name=impName; line=i; resolved="(language:global)"});
             }
-
-            // 优先级2: 标准库 ~/lib/ (文件形式)
-            if(!resolved){
-                var stdFilePath = stdlibDir ++ relPathFile;
-                if(io.exist(stdFilePath)) resolved = stdFilePath;
+            else {
+                table.push(importNames, {name=impName; line=i});
             }
-            // 优先级2b: 标准库 ~/lib/ (目录形式)
-            if(!resolved){
-                var stdDirPath = stdlibDir ++ relPathDir;
-                if(io.exist(stdDirPath)) resolved = stdDirPath;
-            }
+        }
+    }
 
-            table.push(importEntries, {name=impName; line=i; resolved=resolved});
+    // 让 aardio 自己的 io.libpath 在目标 AppRoot 中解析库，避免手工猜测文件/目录形式与搜索优先级。
+    if(#importNames){
+        var resolveTask = function(entries){
+            var resolved = {};
+            for(_ri=1; #entries; 1){
+                var ent = entries[_ri];
+                var p = io.libpath(ent.name);
+                table.push(resolved, {name=ent.name; line=ent.line; resolved=p});
+            }
+            fiber.yield(resolved);
+        };
+        var rf = fiber.create(resolveTask, projectRoot);
+        var rok, resolvedEntries = fiber.resume(rf, importNames);
+        if(rok && resolvedEntries){
+            for(_re=1; #resolvedEntries; 1) table.push(importEntries, resolvedEntries[_re]);
+        }
+        else {
+            // io.libpath 解析环境异常时保留条目为 MISSING，让调用方得到明确结果而不是静默跳过。
+            for(_re2=1; #importNames; 1){
+                table.push(importEntries, {name=importNames[_re2].name; line=importNames[_re2].line; resolved=null});
+            }
         }
     }
 
@@ -922,11 +1037,23 @@ var checkImports = function(filePath, ignorePatterns){
 
 var queryApi = function(libName){
     var aalintDir = fsys.getExeDir();
+    var sourceRoot = aalintDir;
+    // aalint 推荐放在 aardio.exe 同目录；如果没有，则使用官方 process.aardio 定位已安装 IDE。
+    // 这样 --api 不再因为 aalint.exe 放在独立 tools 目录就丢失标准库源码。
+    if(!io.exist(io.joinpath2(sourceRoot,"lib"))){
+        try {
+            import process.aardio;
+            var installedRoot = process.aardio.getDir();
+            if(installedRoot && io.exist(io.joinpath2(installedRoot,"lib"))) sourceRoot = installedRoot;
+        }
+        catch(e) {
+        }
+    }
     // 尝试两种路径: xxx.aardio 文件 和 xxx\_.aardio 目录
     var relPathFile = string.replace(libName, `\.`, "\\") ++ ".aardio";
     var relPathDir = string.replace(libName, `\.`, "\\") ++ "\\_.aardio";
-    var tryFilePath = aalintDir ++ "\lib\" ++ relPathFile;
-    var tryDirPath = aalintDir ++ "\lib\" ++ relPathDir;
+    var tryFilePath = sourceRoot ++ "\lib\" ++ relPathFile;
+    var tryDirPath = sourceRoot ++ "\lib\" ++ relPathDir;
     var libPath = null;
     if(io.exist(tryFilePath)){
         libPath = tryFilePath;
@@ -1054,8 +1181,8 @@ var checkFile = function(filePath, ignorePatterns){
         addResult(fullPath, true, "check", null, false);
         return true;
     }
-    var func, err = loadcode(fullPath);
-    if(func){
+    var compileOk, err = compileFileAtRoot(fullPath);
+    if(compileOk){
         _logInfo(_C.GRN ++ "  PASS  " ++ _C.RST ++ fullPath);
         addResult(fullPath, true, "check", null);
         return true;
@@ -1700,11 +1827,96 @@ if(winform){
     return string.join(inject, '\r\n') ++ '\r\n';
 };
 
-// 把注入代码插入目标源码：优先在 win.loopMessage(); 前，找不到则追加末尾
-// 注意: 换行分隔必须用单引号 '\r\n'（真实 CRLF），双引号是原样字符串不会转义！
+// 在 aardio 源码中寻找“真正处于 CODE 区域”的文本位置。
+// 跳过 raw/escaped strings、行/块原文、以及 ?> ... <? 模板原文；返回值保持原源码字节偏移。
+var _findAardioCodeMarker = function(sourceText, mark){
+    if(!sourceText || !mark || !#mark) return null;
+    var dq = string.char(0x22), sq = string.char(0x27), bt = string.char(0x60);
+    var bs = string.char(0x5C), slash = string.char(0x2F), star = string.char(0x2A);
+    var quote = null, blockStars = 0, lineComment = false;
+    var templateMode = false, templateRaw = false;
+    var n = #sourceText;
+
+    // 模板语法仅在首个非空白内容以 <? 或 ?> 开始时启用。
+    var firstPos = 1;
+    while(firstPos <= n){
+        var fc = string.slice(sourceText,firstPos,firstPos);
+        if(fc != " " && fc != '\t' && fc != '\r' && fc != '\n') break;
+        firstPos++;
+    }
+    if(firstPos + 1 <= n){
+        var first2 = string.slice(sourceText,firstPos,firstPos+1);
+        if(first2 == "<?" || first2 == "?>") templateMode = true;
+    }
+
+    var isAsciiLetter = function(ch){
+        return ch && #ch && string.indexOf("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",ch);
+    };
+
+    var i = 1;
+    while(i <= n){
+        var ch = string.slice(sourceText,i,i);
+        var nextCh = (i < n) ? string.slice(sourceText,i+1,i+1) : "";
+        var thirdCh = (i+1 < n) ? string.slice(sourceText,i+2,i+2) : "";
+
+        if(lineComment){
+            if(ch == '\r' || ch == '\n') lineComment = false;
+            i++;
+            continue;
+        }
+        if(templateRaw){
+            if(ch == "<" && nextCh == "?" && !isAsciiLetter(thirdCh)){
+                templateRaw = false;
+                i += 2;
+            }
+            else i++;
+            continue;
+        }
+        if(blockStars > 0){
+            if(ch == star){
+                var j = i;
+                while(j <= n && string.slice(sourceText,j,j) == star) j++;
+                if((j-i) == blockStars && j <= n && string.slice(sourceText,j,j) == slash){
+                    blockStars = 0;
+                    i = j + 1;
+                    continue;
+                }
+            }
+            i++;
+            continue;
+        }
+        if(quote){
+            if(quote == sq && ch == bs && i < n){ i += 2; continue; }
+            if((quote == dq || quote == bt) && ch == quote && nextCh == quote){ i += 2; continue; }
+            if(ch == quote) quote = null;
+            i++;
+            continue;
+        }
+
+        if(templateMode){
+            if(ch == "<" && nextCh == "?" && !isAsciiLetter(thirdCh)){ i += 2; continue; }
+            if(ch == "?" && nextCh == ">") { templateRaw = true; i += 2; continue; }
+        }
+
+        if(string.slice(sourceText,i,i+#mark-1) == mark) return i;
+        if(ch == slash && nextCh == slash){ lineComment = true; i += 2; continue; }
+        if(ch == slash && nextCh == star){
+            var j2 = i + 1;
+            while(j2 <= n && string.slice(sourceText,j2,j2) == star) j2++;
+            blockStars = j2 - (i + 1);
+            i = j2;
+            continue;
+        }
+        if(ch == dq || ch == sq || ch == bt){ quote = ch; i++; continue; }
+        i++;
+    }
+    return null;
+};
+
+// 把注入代码插入目标源码：优先在真实代码中的 win.loopMessage 前；找不到仍保持旧行为追加末尾。
+// 这样字符串、块原文、模板 HTML 中出现的 “win.loopMessage();” 不会抢走注入点。
 var injectIntoSource = function(sourceText, injectCode){
-    var mark = "win.loopMessage();";
-    var pos = string.indexOf(sourceText, mark);
+    var pos = _findAardioCodeMarker(sourceText, "win.loopMessage");
     if(pos){
         return string.left(sourceText, pos-1) ++ injectCode ++ '\r\n' ++ string.slice(sourceText, pos);
     }
@@ -1732,6 +1944,10 @@ var runFileIsolated = function(filePath, timeout, customLib, libOnly, ignorePatt
 
     var capFilePath = io.tmpname("aalint_iso_cap_");
     var childArgs = {"--run"; "--timeout"; "0"; "--capture"; "--capture-out"; capFilePath};
+    if(_forcedAppRoot){
+        table.push(childArgs, "--root");
+        table.push(childArgs, _forcedAppRoot);
+    }
     if(uiSmoke){
         table.push(childArgs, "--ui-smoke");
         table.push(childArgs, "--web-smoke");
@@ -1861,6 +2077,21 @@ var runFileIsolated = function(filePath, timeout, customLib, libOnly, ignorePatt
     addResult(fullPath, true, "run-isolated", null, false, false, null, null, null, null, accOutput);
     return true;
 };
+var _copyLibTree = function(sourceDir, targetDir){
+    var src = io.fullpath(sourceDir);
+    if(!string.endWith(src,"\") && !string.endWith(src,"/")) src ++= "\";
+    fsys.enum(src, "*.*",
+        function(dir, file, full, fd){
+            if(file){
+                var rel = string.slice(full, #src + 1);
+                var outPath = io.joinpath2(targetDir, rel);
+                fsys.createParentDir(outPath);
+                io.copy(full, outPath);
+            }
+        }, true
+    );
+};
+
 var runFile = function(filePath, timeout, customLib, libOnly, ignorePatterns, capture, uiSmoke, webSmoke, uiFlowPath, captureOut, setupPath, snapInPath, snapOutPath, snapGenPath, snapDelay){
     var fullPath = io.fullpath(filePath);
     if(uiFlowPath) uiFlowPath = io.fullpath(uiFlowPath);
@@ -1875,9 +2106,9 @@ var runFile = function(filePath, timeout, customLib, libOnly, ignorePatterns, ca
         return true;
     }
 
-    // 预编译检查
-    var _, preCompileErr = loadcode(fullPath);
-    if(!_){
+    // 预编译检查：必须在目标 AppRoot 下调用官方 loadcode()。
+    var preCompileOk, preCompileErr = compileFileAtRoot(fullPath);
+    if(!preCompileOk){
         _logErr(_C.RED ++ "  FAIL  " ++ _C.RST ++ "编译错误: " ++ fullPath);
         _logErr(_C.DIM ++ "  ---- 错误详情 ----" ++ _C.RST);
         _logErr(formatDebugOutput(preCompileErr, fullPath));
@@ -1887,7 +2118,7 @@ var runFile = function(filePath, timeout, customLib, libOnly, ignorePatterns, ca
     }
 
     var pathInfo = io.splitpath(fullPath);
-    var projectDir = pathInfo.dir;
+    var projectDir = resolveAppRoot(fullPath);
 
     if(customLib){
         var customFull = io.fullpath(customLib);
@@ -1904,38 +2135,30 @@ var runFile = function(filePath, timeout, customLib, libOnly, ignorePatterns, ca
             var mergedLib = mergedDir ++ "/lib/";
             io.createDir(mergedLib);
             var projectLib = projectDir ++ "/lib/";
-            if(io.exist(projectLib)){
-                fsys.enum(projectLib, "*.*",
-                    function(dir,file,full,fd){
-                        if(file) io.copy(full, io.joinpath2(mergedLib, file));
-                    }, false
-                );
-            }
-            if(io.exist(customFull) && fsys.isDir(customFull)){
-                fsys.enum(customFull, "*.*",
-                    function(dir,file,full,fd){
-                        if(file) io.copy(full, io.joinpath2(mergedLib, file));
-                    }, false
-                );
-            }
+            if(io.exist(projectLib)) _copyLibTree(projectLib, mergedLib);
+            if(io.exist(customFull) && fsys.isDir(customFull)) _copyLibTree(customFull, mergedLib);
             projectDir = mergedDir;
         }
     }
 
     var task = function(fullPath){
         var rawErrors = {};
-        ..onError = function(err){
+        var _origOnError = ..onError;
+        ..onError = function(err, over){
             // 错误冒泡到线程顶层时才触发（如 UI 事件回调错误、未捕获错误）。
             // 此时栈尚未展开，可用 debug.traceback 附加调用栈 —— 替代 IDE 弹窗的关键调试信息。
-            if(type(err) == "string"){
+            if(type(err) == "string" && !over){
                 import debug;
-                var tb = debug.traceback(,"调用栈:",2);
+                var tb = debug.traceback(,"调用栈:",3);
                 if(tb && #tb > 0) err = err ++ '\n---------------------------------------------------\n' ++ tb;
             }
             table.push(rawErrors, err);
-            return true;
+            // aalint 已经自行保存错误；返回 null 按内核约定抑制默认错误输出/弹窗。
+            return null;
         };
         import console;
+        var _origConPause = console.pause;
+        var _origConKbRead = console.kbRead;
         console.pause = function(){};
         console.kbRead = function(wait){
             return { wVirtualKeyCode = 0x0D };
@@ -1945,19 +2168,30 @@ var runFile = function(filePath, timeout, customLib, libOnly, ignorePatterns, ca
         // （console 库的 print/write 通过 WriteConsoleB 直写控制台句柄，必须全部拦截才能捕获）
         var _capFilePath = null;
         var _origStdout = null;
+        var _origStderr = null;
+        var _origConStderr = null;
         var _origConWrite = null;
+        var _origConWriteText = null;
         var _origConPrint = null;
+        var _origConLog = null;
         var _origGlobalPrint = null;
         if(capture){
             import console;
             _origConWrite = console.write;
+            _origConWriteText = console.writeText;
             _origConPrint = console.print;
+            _origConLog = console.log;
             _origGlobalPrint = ..print;
             _capFilePath = captureOut ? io.fullpath(captureOut) : io.tmpname("aalint_cap_");
             var capFile = io.open(_capFilePath, "w+");
             if(capFile){
                 _origStdout = io.stdout;
+                _origStderr = io.stderr;
+                _origConStderr = console.stderr;
                 io.stdout = capFile;
+                // console.error 使用 console.stderr（初始化自 io.stderr），直接 io.stderr.write 也很常见。
+                io.stderr = capFile;
+                console.stderr = capFile;
             }
             var capWrite = function(...){
                 var pp = {...};
@@ -1979,10 +2213,24 @@ var runFile = function(filePath, timeout, customLib, libOnly, ignorePatterns, ca
                 io.stdout.flush();
             };
             console.write = capWrite;
+            console.writeText = capWrite;
             console.print = capPrint;
             console.log = capPrint;
             ..print = capPrint;
         }
+
+        var restoreRuntimeHooks = function(){
+            ..onError = _origOnError;
+            console.pause = _origConPause;
+            console.kbRead = _origConKbRead;
+            if(capture && _origConWrite) console.write = _origConWrite;
+            if(capture && _origConWriteText) console.writeText = _origConWriteText;
+            if(capture && _origConPrint) console.print = _origConPrint;
+            if(capture && _origConLog) console.log = _origConLog;
+            if(capture && _origGlobalPrint) ..print = _origGlobalPrint;
+            if(capture && _origConStderr) console.stderr = _origConStderr;
+            if(capture && _origStderr) io.stderr = _origStderr;
+        };
 
         var webSmokeHooks = null;
         if(webSmoke) webSmokeHooks = installWebSmokeHooks();
@@ -1990,9 +2238,7 @@ var runFile = function(filePath, timeout, customLib, libOnly, ignorePatterns, ca
         // 快照 / mock 注入：编译前把注入代码拼进源码（同作用域，可访问 winform 与业务变量）
         var snapInject = buildSnapshotInject(setupPath, snapInPath, snapOutPath, snapGenPath, snapDelay);
         if(snapInject == null){
-            if(capture and _origConWrite) console.write = _origConWrite;
-            if(capture and _origConPrint) console.print = _origConPrint;
-            if(capture and _origGlobalPrint) ..print = _origGlobalPrint;
+            restoreRuntimeHooks();
             if(capture and _origStdout and _capFilePath){
                 io.stdout.close();
                 io.stdout = _origStdout;
@@ -2007,9 +2253,7 @@ var runFile = function(filePath, timeout, customLib, libOnly, ignorePatterns, ca
         if(!f){
             restoreWebSmokeHooks(webSmokeHooks);
             // 恢复
-            if(capture and _origConWrite) console.write = _origConWrite;
-            if(capture and _origConPrint) console.print = _origConPrint;
-            if(capture and _origGlobalPrint) ..print = _origGlobalPrint;
+            restoreRuntimeHooks();
             if(capture and _origStdout and _capFilePath){
                 io.stdout.close();
                 io.stdout = _origStdout;
@@ -2021,9 +2265,7 @@ var runFile = function(filePath, timeout, customLib, libOnly, ignorePatterns, ca
         var ok, runErr = call(f);
         restoreWebSmokeHooks(webSmokeHooks);
         // 恢复 + 读取捕获内容
-        if(capture and _origConWrite) console.write = _origConWrite;
-        if(capture and _origConPrint) console.print = _origConPrint;
-        if(capture and _origGlobalPrint) ..print = _origGlobalPrint;
+        restoreRuntimeHooks();
         var capturedOutput = null;
         if(capture and _origStdout and _capFilePath){
             io.stdout.flush();
@@ -2097,7 +2339,7 @@ var runFile = function(filePath, timeout, customLib, libOnly, ignorePatterns, ca
                         if(wantText || wantContains){
                             var text = win.getText(hwnd);
                             if(wantText && text != wantText) return false;
-                            if(wantContains && !string.find(text, wantContains)) return false;
+                            if(wantContains && !string.indexOf(text, tostring(wantContains))) return false;
                         }
                         return true;
                     };
@@ -2152,13 +2394,69 @@ var runFile = function(filePath, timeout, customLib, libOnly, ignorePatterns, ca
                         thread.delay(step.ms : step.delay : 300);
                         continue;
                     }
+
+                    var targetSpec = step.target || step;
+                    if(action == "assertExists"){
+                        if(!findTarget(targetSpec)) return fail("UI flow 第 " ++ si ++ " 步目标控件不存在");
+                        continue;
+                    }
+                    elseif(action == "assertNotExists"){
+                        if(findTarget(targetSpec)) return fail("UI flow 第 " ++ si ++ " 步目标控件仍然存在");
+                        continue;
+                    }
+                    elseif(action == "waitFor" || action == "waitGone"){
+                        var waitMs = step.timeout : step.ms : 3000;
+                        var pollMs = step.poll : 50;
+                        var waitStart = time.tick();
+                        var waitHwnd = null;
+                        while(time.tick() - waitStart <= waitMs){
+                            waitHwnd = findTarget(targetSpec);
+                            if(action == "waitFor" && waitHwnd) break;
+                            if(action == "waitGone" && !waitHwnd) break;
+                            thread.delay(pollMs);
+                        }
+                        if(action == "waitFor" && !waitHwnd) return fail("UI flow 第 " ++ si ++ " 步等待目标控件超时");
+                        if(action == "waitGone" && waitHwnd) return fail("UI flow 第 " ++ si ++ " 步等待目标控件消失超时");
+                        continue;
+                    }
                     
-                    var hwnd = findTarget(step.target || step);
+                    var hwnd = findTarget(targetSpec);
                     if(!hwnd) return fail("UI flow 第 " ++ si ++ " 步找不到目标控件");
                     var className = win.getClass(hwnd);
                     
                     if(action == "click"){
                         clickHwnd(hwnd, step.x, step.y);
+                    }
+                    elseif(action == "clickMessage"){
+                        // 标准 Button/CheckBox/RadioButton 的后台点击。
+                        ::User32.PostMessage(hwnd, 0xF5/*BM_CLICK*/, 0, 0);
+                    }
+                    elseif(action == "command"){
+                        // win.ui 的 oncommand 最终由父窗口 WM_COMMAND 分发；与 BM_CLICK 分开，
+                        // 可测试 plus/custom 等没有标准 BM_CLICK 行为但依赖 oncommand 的控件。
+                        notifyCommand(hwnd, step.code : step.event : 0);
+                    }
+                    elseif(action == "sendMessage" || action == "postMessage"){
+                        var msg = step.message : step.msg;
+                        if(msg === null) return fail("UI flow 第 " ++ si ++ " 步缺少 message/msg");
+                        var wp = step.wParam : 0;
+                        var lp = step.lParam : 0;
+                        if(action == "sendMessage") ::User32.SendMessage(hwnd,msg,wp,lp);
+                        else ::User32.PostMessage(hwnd,msg,wp,lp);
+                    }
+                    elseif(action == "assertVisible"){
+                        if(!::User32.IsWindowVisible(hwnd)) return fail("UI flow 第 " ++ si ++ " 步目标控件不可见");
+                    }
+                    elseif(action == "assertEnabled"){
+                        if(!::User32.IsWindowEnabled(hwnd)) return fail("UI flow 第 " ++ si ++ " 步目标控件未启用");
+                    }
+                    elseif(action == "assertChecked"){
+                        var actualChecked = ::User32.SendMessage(hwnd,0xF0/*BM_GETCHECK*/,0,0) ? true : false;
+                        var expectedChecked = (step.value === false) ? false : true;
+                        if(actualChecked != expectedChecked) return fail("UI flow 第 " ++ si ++ " 步 checked 状态不匹配");
+                    }
+                    elseif(action == "close"){
+                        ::User32.PostMessage(hwnd, 0x10/*WM_CLOSE*/, 0, 0);
                     }
                     elseif(action == "setText" || action == "input" || action == "type"){
                         win.setText(hwnd, tostring(step.text : step.value : ""));
@@ -2188,7 +2486,7 @@ var runFile = function(filePath, timeout, customLib, libOnly, ignorePatterns, ca
                         if(!(expectedText === null) && actualText != tostring(expectedText)){
                             return fail("UI flow 第 " ++ si ++ " 步文本不匹配: 期望 " ++ tostring(expectedText) ++ "，实际 " ++ tostring(actualText));
                         }
-                        if(expectedContains && !string.find(actualText, tostring(expectedContains))){
+                        if(expectedContains && !string.indexOf(actualText, tostring(expectedContains))){
                             return fail("UI flow 第 " ++ si ++ " 步文本不包含: 期望包含 " ++ tostring(expectedContains) ++ "，实际 " ++ tostring(actualText));
                         }
                         if(expectedText === null && !expectedContains){
@@ -2346,6 +2644,7 @@ var opts = {
     evalExpr = null;
     dryRun = false;
     timeout = 5;
+    appRoot = null;
     customLib = null;
     libOnly = false;
     ignorePatterns = {};
@@ -2381,6 +2680,8 @@ while(i <= #args){
     } elseif(arg == "--lint" || arg == "-l"){
         opts.lint = true;
         if(opts.mode != "dir") opts.mode = "lint";
+    } elseif(arg == "--lint-all"){
+        _lintIncludeExperimental = true;
     } elseif(arg == "--symbols" || arg == "-s"){
         opts.symbols = true;
         if(opts.mode != "dir") opts.mode = "symbols";
@@ -2471,6 +2772,9 @@ while(i <= #args){
     } elseif(arg == "--timeout"){
         i++;
         if(i <= #args) opts.timeout = tonumber(args[i]) : 5;
+    } elseif(arg == "--root"){
+        i++;
+        if(i <= #args) opts.appRoot = args[i];
     } elseif(arg == "--lib"){
         i++;
         if(i <= #args) opts.customLib = args[i];
@@ -2501,11 +2805,20 @@ if(string.match(opts.mode, `^dir`) && !opts.dir && #opts.files > 0){
     opts.dir = table.remove(opts.files, 1);
 }
 
-// ─── JSON 模式激活 ───
+// ─── JSON 模式激活 / AppRoot 覆盖 ───
 _useJson = opts.json;
+if(opts.appRoot){
+    _forcedAppRoot = io.fullpath(opts.appRoot);
+    if(!io.exist(_forcedAppRoot)){
+        _logErr(_C.RED ++ "AppRoot 目录不存在: " ++ _forcedAppRoot ++ _C.RST);
+        exitCode = 2;
+    }
+}
 
 // ─── 执行 ───
-if(#args == 0 || opts.showHelp){
+if(exitCode == 2 && opts.appRoot && !io.exist(_forcedAppRoot)){
+    // 参数错误已输出。
+} elseif(#args == 0 || opts.showHelp){
     printHelp();
     if(#args == 0) exitCode = 2;
 } elseif(opts.showVersion){
@@ -2548,7 +2861,7 @@ if(#args == 0 || opts.showHelp){
                     if(tb2 && #tb2 > 0) err2 = err2 ++ '\n---------------------------------------------------\n' ++ tb2;
                 }
                 table.push(rawErrors2, err2);
-                return true;
+                return null;
             };
             var f2, cErr = loadcode("return(" ++ expr ++ ");", "<eval>");
             if(!f2){

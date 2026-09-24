@@ -3,10 +3,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: '73e5c557-7d50-43f8-8d5d-22e3378cb2b6'
-  PropagateID: '73e5c557-7d50-43f8-8d5d-22e3378cb2b6'
-  ReservedCode1: '647eee0e-b949-469e-ad39-5ed126dce852'
-  ReservedCode2: '647eee0e-b949-469e-ad39-5ed126dce852'
+  ProduceID: '98175bac-be32-4145-a960-1f48537972ad'
+  PropagateID: '98175bac-be32-4145-a960-1f48537972ad'
+  ReservedCode1: '56f73f0a-3a94-4032-8b33-d0b70e073469'
+  ReservedCode2: '56f73f0a-3a94-4032-8b33-d0b70e073469'
 ---
 
 # aardio 踩坑记录（PITFALLS）
@@ -43,6 +43,21 @@ AIGC:
 ---
 
 ## 记录区（新记录追加在这一行下面）
+
+### 2026-09-24 aalint --ide-publish 发布时序：exe 延迟生成 + --ide-publish-refresh 必须在工程目录运行
+- 状态：已验证（升级 aalint v2.4.1 实测两轮发布）
+- 场景：用 `aalint --ide-publish <aproj>` 触发 IDE 编译发布 aalint 自身工程时
+- 现象1：命令立即返回 PASS，但 dist exe 要数秒~15 秒后才出现，期间运行/复制 exe 报 `The process cannot access the file because it is being used by another process`（IDE 正在写入）
+- 现象2：`--ide-publish-refresh <aproj>` 报 `FAIL 当前目录未找到 default.aproj`——它要求当前工作目录就在工程目录下；`--ide-publish` 则对 IDE 当前打开的工程生效，与传入的 aproj 路径是否是 IDE 当前工程无关
+- 根因：publish 是向 IDE 主窗体发消息异步执行；refresh 的实现按当前工作目录解析工程文件
+- 解决：publish 后轮询等待 exe 出现且可执行（约 10-15 秒，libEmbed=true 打包全库较慢）再做版本验证；refresh 用前先 `cd` 到工程目录；若 IDE 弹确认框未处理，refresh 可代为自动应答
+
+### 2026-09-24 PowerShell 5.1 给 aalint --eval 传参剥内嵌双引号：报"期望:string 实际获取:null"假错
+- 状态：已验证（v2.4.1 与 PS 5.1 环境实测；与 aalint 版本无关，v2.4.0 同样受影响）
+- 场景：PowerShell 里 `& aalint.exe --eval 'string.len("abc")'` 验证 API 行为
+- 现象：报错 `调用函数参数:'len' 期望:string 实际获取:null`——字符串实参变成裸标识符；含空格表达式则报 `预期:')' 匹配:'('`；纯算术表达式如 `(2+3)*4` 正常返回
+- 根因：PowerShell 5.1 向 native exe 传参时不转义内嵌双引号（参数重组规则已知问题），`"abc"` 到达进程时双引号已被剥掉
+- 解决：字符串场景不用 `--eval`，改写临时 .aardio 文件走 `--run --capture` 验证（更可靠且可复用）；必须用 `--eval` 时选不含双引号/空格的表达式
 
 ### 2026-09-23 thread.invoke 线程函数无 pcall 保护：任何异常导致线程静默死亡，setBusy(false) 不执行 UI 永久锁死
 - 状态：已验证（用户实测两次"生成中"后永远不动，只能重启程序；根因是线程内网络/解析异常 → 线程死亡 → setBusy(false) 不执行 → 按钮永久禁用+进度条残留）

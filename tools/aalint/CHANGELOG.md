@@ -1,4 +1,29 @@
+---
+AIGC:
+  ContentProducer: '001191110102MAD55U9H0F10002'
+  ContentPropagator: '001191110102MAD55U9H0F10002'
+  Label: '1'
+  ProduceID: '8bf414d5-a700-4b40-9095-96516ddeae27'
+  PropagateID: '8bf414d5-a700-4b40-9095-96516ddeae27'
+  ReservedCode1: '99d028c2-9db1-4838-912b-5306049db269'
+  ReservedCode2: '99d028c2-9db1-4838-912b-5306049db269'
+---
+
 # 更新日志
+
+## v2.4.1
+
+- 基于用户提供的 aardio 官方源码子集重新审计 lint 与运行模型，原则改为“aardio 内核负责语法真值，aalint 只补 Agent/IDE 外验证能力和高置信度陷阱”。
+- **AppRoot 解析**：检查/运行时按 `.aproj` 自动向上解析工程根目录（可用 `--root <path>` 显式覆盖），子目录文件也能以工程根作为 AppRoot。
+- lexical masker 增加 aardio 模板原文 `?> ... <?` 识别：仅当源码首个非空白内容以 `<?`/`?>` 开始时启用模板模式，并保留双引号/反引号 raw string、单引号转义字符串、可变星号块原文处理；snapshot 注入点只在真实 CODE 区域寻找 `win.loopMessage`。
+- 默认 lint 收敛：`assign-in-cond`、`table-isarray`、`shadow-builtin`、`ternary-fallback`、`try-return`、`global-dot`、`unused-import` 降为 `--lint-all` 实验规则；`str-plus`、`dquote-escape`、`for-in-key`、`io-file-chain` 经官方源码反查确认为伪规则，禁用；移除 `foreign-idiom` 对 `?.` 的字面检测，并给 `pairs/ipairs/pcall` 增加标识符边界，避免合法名称子串误报。
+- `--imports` 改在目标 AppRoot 中调用官方 `io.libpath()` 解析库，正确识别语言级 `import global`，并忽略字符串/注释文本里的伪 `import`。
+- `--api` 在 aalint 未放到 aardio 目录时，尝试用官方 `process.aardio.getDir()` 定位标准库源码。
+- `--capture` 增加 `io.stderr` / `console.stderr` 重定向，覆盖 `console.error()` / `console.writeText()`，运行结束恢复原句柄、console 函数及全局 `print`。
+- `global.onError` 捕获后返回 `null`，按内核约定抑制默认错误处理器的重复输出/弹窗，并在错误栈未展开时附加 `debug.traceback`（覆盖 UI 事件回调里的未处理错误）；补充 `win.inputBox` 常见导入/大小写提示。
+- `--ui-flow` 区分标准控件 `BM_CLICK` 与父窗体 `WM_COMMAND`，新增等待/存在性断言、后台按钮点击与关闭动作、`sendMessage/postMessage`、`assertVisible`、`assertEnabled`、`assertChecked`；文本断言 `contains` 明确按字面包含处理。
+- 文档明确：涉及真实窗口回调错误时优先 `--run-isolated --ui-flow`；官方内核对“在设置 appBaseDir 的 fiber 中创建 UI 后发生异常”存在 `cannot resume fiber` 风险提示。
+- 已知限制：`--lib` 仍会通过临时 AppRoot 合并用户库；由于官方 `fiber.create(..., appBaseDir)` 同时改变 AppRoot 与用户库目录，这可能改变 `/res` 等路径语义，暂不做未经验证的重构。测试过程详见 `docs/2.4.1-test1-notes.md`、`docs/2.4.1-test2-notes.md`、`docs/OFFICIAL_SOURCE_NOTES.md`。
 
 ## v2.4.0
 
@@ -97,3 +122,5 @@
 - 支持窗口控件烟测和显式 UI 流程测试。
 - 支持 `--run-isolated`，用于服务、后台线程、跨语言桥接等可能阻塞的代码。
 - 支持控制已打开的 aardio IDE 执行编译、运行、发布和重新载入后发布。
+
+> AI生成

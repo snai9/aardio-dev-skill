@@ -1,0 +1,42 @@
+{
+  "delay": 500,
+  "stepDelay": 120,
+  "steps": [
+    {
+      "action": "waitFor",
+      "target": { "class": "Edit", "index": 1 },
+      "timeout": 3000
+    },
+    {
+      "action": "assertVisible",
+      "target": { "class": "Edit", "index": 1 }
+    },
+    {
+      "action": "assertEnabled",
+      "target": { "class": "Edit", "index": 1 }
+    },
+    {
+      "action": "setText",
+      "target": { "class": "Edit", "index": 1 },
+      "text": "aalint-test"
+    },
+    {
+      "action": "clickMessage",
+      "target": { "text": "确定" }
+    },
+    {
+      "action": "waitFor",
+      "target": { "contains": "完成" },
+      "timeout": 3000
+    },
+    {
+      "action": "assertText",
+      "target": { "contains": "完成" },
+      "contains": "完成"
+    },
+    {
+      "action": "close",
+      "target": { "class": "AardioForm", "index": 1 }
+    }
+  ]
+}

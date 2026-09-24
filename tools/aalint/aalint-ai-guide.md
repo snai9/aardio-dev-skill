@@ -1,3 +1,14 @@
+---
+AIGC:
+  ContentProducer: '001191110102MAD55U9H0F10002'
+  ContentPropagator: '001191110102MAD55U9H0F10002'
+  Label: '1'
+  ProduceID: '5be72f3c-ad5c-4f79-8939-0055d1c05806'
+  PropagateID: '5be72f3c-ad5c-4f79-8939-0055d1c05806'
+  ReservedCode1: 'a86f2340-7e60-4369-8244-96da06474cf5'
+  ReservedCode2: 'a86f2340-7e60-4369-8244-96da06474cf5'
+---
+
 # aalint AI 开发指南
 
 面向 AI 编码代理：让 AI 在编写、修改、验证 aardio 代码时稳定使用 `aalint` 得到可执行反馈，而不是只靠静态猜测。
@@ -5,7 +16,7 @@
 先确认版本：
 
 ```powershell
-./aalint.exe --version   # 预期包含 aalint v2.4.0
+./aalint.exe --version   # 预期包含 aalint v2.4.1
 ```
 
 ## 基本原则
@@ -33,7 +44,7 @@
 | 语法检查（文件/目录） | `<file>` / `--dir <dir>` |
 | 常见陷阱检查 | `--lint <file>` |
 | 执行短代码 | `--run --timeout 5 <file>` |
-| 捕获 stdout/print | `--run --capture --timeout 5 <file>` |
+| 捕获 stdout/stderr/print | `--run --capture --timeout 5 <file>` |
 | 写输出到指定文件 | `--run --capture --capture-out out.txt <file>` |
 | 窗口控件事件烟测 | `--run --ui-smoke --timeout 6 <file>` |
 | 显式 UI 流程 | `--run --ui-flow flow.json --timeout 8 <file>` |
@@ -58,7 +69,7 @@
 ./aalint.exe --lint .\main.aardio   # 常见陷阱
 ```
 
-lint 重点检查：字符串误用 `+` 拼接（应 `++`）；`try` 块内 `return` 语义误判；`?:` 假值陷阱；双引号字符串误用 `\"`；namespace 内漏 `..` 前缀；未使用 import；遮蔽内置名称；**`~=` 误写（应 `!=`）；`table.isArray()` 误用（仅检测纯数组，普通表应 `table.isArrayLike`）**。
+默认 lint 只保留高置信度规则，例如 `thread.invoke(fn())` 把调用结果当线程入口，以及明确的 Lua/JS 外语言写法。`try-return`、namespace、`?:`、单 `=`、`table.isArray()`、变量遮蔽等启发式规则默认关闭，需要时用 `--lint-all --lint`。语法是否合法始终以 aardio `loadcode()` / 实际运行结果为准。
 
 ### --run（同线程快速执行）
 
@@ -75,7 +86,7 @@ lint 重点检查：字符串误用 `+` 拼接（应 `++`）；`try` 块内 `ret
 ./aalint.exe --run --capture --capture-out out.txt --timeout 5 .\test.aardio
 ```
 
-`--capture` 全面拦截 `console.write` / `console.print` / `console.log` / 全局 `print`（含 `io.stdout.write`），按原始格式（参数 `\t` 分隔、数组序列化、尾部换行）捕获。
+`--capture` 拦截 `console.write` / `console.print` / `console.log` / `console.writeText` / 全局 `print`，并重定向 `io.stdout`、`io.stderr` 与 `console.stderr`，因此 `console.error()` 也可进入捕获结果。
 
 `--capture-out <file>`：把捕获内容写到**指定文件且不自动删除**，供父进程实时读取、崩溃后补救、或自动化取输出。
 
@@ -171,7 +182,7 @@ JSON 格式示例（手工伪造"第二步已完成"）：
 
 `--ui-smoke`：窗口创建后枚举当前线程窗口与控件，触发 `button/checkbox/radiobutton/plus/static(需 notify=1)/edit.oncommand`、`combobox/listbox.onSelChange`、`listview/treeview.onClick` 等常见事件。适合发现"语法通过但点按钮才报错"的问题；不理解业务流程。
 
-`--ui-flow`：只执行 JSON 声明的步骤，比 smoke 安全。示例 `flow.json`：
+`--ui-flow`：只执行 JSON 声明的步骤，比 smoke 安全。2.4.1 额外支持 `command`（父窗体 `WM_COMMAND`）、`sendMessage/postMessage`、`assertVisible/assertEnabled/assertChecked`。示例 `flow.json`：
 
 ```json
 {
@@ -186,9 +197,11 @@ JSON 格式示例（手工伪造"第二步已完成"）：
 }
 ```
 
-定位字段：`text`（完全匹配）/ `contains` / `class`|`cls` / `id` / `index`（从 1 起）。动作：`setText|input|type`、`click`（可带 `x`/`y`）、`select`、`check`（`value:false` 取消）、`assertText|expectText|verifyText|assert`（`text`/`equals`/`value` 精确或 `contains` 包含）、`sleep|wait`（`ms`）。
+定位字段：`text`（完全匹配）/ `contains` / `class`|`cls` / `id` / `index`（从 1 起）。动作：`setText|input|type`、`click`、`clickMessage`、`command`、`sendMessage|postMessage`、`select`、`check`、`close`、`assertText|expectText|verifyText|assert`、`assertExists|assertNotExists|assertVisible|assertEnabled|assertChecked`、`waitFor|waitGone`、`sleep|wait`。
 
 使用建议：真实业务界面优先 `--ui-flow`；给控件设稳定文本/ID 别依赖 `class+index`；流程末尾用测试专用按钮或成功路径 `error()`/输出可断言状态；**有网络/删除/付款/发布副作用的按钮不要放进流程**。
+
+**验证按钮回调异常时优先 `--run-isolated --ui-flow`**。aardio 内核文档明确提示：在设置 `appBaseDir` 的 fiber 中创建窗口后，如果 fiber 因异常停止，残留窗口可能在后续回调触发 `cannot resume fiber`；子进程隔离能避免这类状态污染 aalint 本身。
 
 ### --api / --imports / --symbols / --eval
 
@@ -198,6 +211,8 @@ JSON 格式示例（手工伪造"第二步已完成"）：
 ./aalint.exe --symbols .\main.aardio    # 输出 import/函数/变量概览
 ./aalint.exe --eval "string.slice('hello',1,3)"
 ```
+
+`--imports` 在目标 AppRoot 中调用 aardio 官方 `io.libpath()` 解析库；`import global` 作为语言级特殊导入直接识别。`--api` 在独立 tools 目录运行时会尝试通过 `process.aardio.getDir()` 定位安装目录。
 
 复杂代码应写临时 `.aardio` 文件用 `--run` 验证。标准库源码在 `<aardio>\lib\`，文档在 `<aardio>\docs\`。
 
@@ -297,3 +312,5 @@ win.loopMessage();
 ```
 
 期望：exit `1`，错误详情包含 `button callback boom`。
+
+> AI生成

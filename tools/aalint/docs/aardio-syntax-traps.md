@@ -1,6 +1,17 @@
+---
+AIGC:
+  ContentProducer: '001191110102MAD55U9H0F10002'
+  ContentPropagator: '001191110102MAD55U9H0F10002'
+  Label: '1'
+  ProduceID: 'b26a4dff-7045-47f7-a82c-8bab2ba65728'
+  PropagateID: 'b26a4dff-7045-47f7-a82c-8bab2ba65728'
+  ReservedCode1: '287be13e-1864-4c94-a1bb-26b23d78121f'
+  ReservedCode2: '287be13e-1864-4c94-a1bb-26b23d78121f'
+---
+
 # aardio 语法陷阱提示
 
-来源：`D:\tools\aardio\docs\guide\` 下的入门文档，重点阅读了 `language`、`ide/system-prompt.md`、`quickstart` 中与语法、运行模型和常见误用相关的内容。
+来源：aardio 安装目录（下称 `<aardio>\`，可用环境变量 `AARDIO_HOME` 定位）下 `docs\guide\` 的入门文档，重点阅读了 `language`、`ide/system-prompt.md`、`quickstart` 中与语法、运行模型和常见误用相关的内容。
 
 本文面向 aalint 后续维护：先帮助人工避坑，也作为可转成 lint 规则的候选清单。
 
@@ -61,18 +72,18 @@ function test(){
 
 `finally` 不应使用。
 
-### `+` 不是可靠的字符串连接
+### `+` 与 `++` 的语义不要靠静态猜测
 
-`+` 是数字加法，`++` 才是字符串连接。虽然某些字面量组合可能触发字符串拼接，但变量、可转数字字符串、空字符串混用时非常容易出现错误。
+`++` 是明确的字符串连接运算符；但 aardio 的 `+` 在某些合法场景也会执行字符串连接，尤其与引号字符串字面量相邻时。仅凭源码形态很难可靠推断两个变量运行时究竟是数字还是字符串，因此 aalint 不应把普通 `+` 当作默认 lint 错误。
 
 ```aardio
 var a = "1";
 var b = "2";
-var wrong = a + b;     // 可能变成数字加法
-var right = a ++ b;    // 字符串连接
+var explicit = a ++ b;    // 明确要求字符串连接
+var legal = a + "x";     // aardio 合法写法，不能仅凭 + 报错
 ```
 
-lint 规则可优先关注：字符串字面量、变量、函数调用混用 `+` 的表达式。
+需要验证变量运行时行为时，应优先写最小测试交给 aardio 实际执行。
 
 ### 只有 `false`、`null`、`0` 为假
 
@@ -108,19 +119,11 @@ var result = condition ? false : true; // condition 为真时仍可能得到 tru
 
 不要把 aardio 的 `??` 当作 JS/TS 的 `??`。处理默认值时，应根据 aardio 的逻辑运算语义和 falsey 集合显式判断。
 
-### `?.` 不存在
+### 不要把 JavaScript optional chaining 直接搬进 aardio
 
-aardio 没有 JavaScript 风格的 optional chaining。
+aardio 不应按 JavaScript 的 `user?.name` 语义理解代码。但 **lint 不能只搜索字面 `?.`**：官方 aardio 源码存在 `#?..` 等合法运算符组合，因此需要结合完整表达式或直接交给编译器判断。
 
-```aardio
-// 错误
-var name = user?.name;
-
-// 可用
-var name = user ? user.name;
-```
-
-也可以使用直接索引 `[[]]` 安全读取，见下文。
+需要安全读取时可使用 aardio 自己的条件表达式、`[[]]` 等机制，具体语义以编译器和官方库写法为准。
 
 ## 字符串与转义
 
@@ -134,7 +137,7 @@ print(#"\n")  // 2
 单引号中可以使用 `\n`、`\r\n`、`\0`、`\x41`、`\uF002` 等转义。双引号和反引号中反斜杠是普通字符，适合 Windows 路径和 aardio 模式。
 
 ```aardio
-var path = "D:\tools\aardio\lib"
+var path = "C:\aardio\lib"
 var pattern = "\d+"
 ```
 
@@ -189,21 +192,17 @@ var value = object[["field"]]
 
 ## 迭代与循环
 
-### `for in` 第一个变量是索引或键
+### `for in` 接收迭代器返回值，不要一概假定为 key/value
+
+直接遍历 table 时，默认迭代器通常先返回索引/key，再返回 value：
 
 ```aardio
 for(i, v in tab) {
-    // i 是索引/key，v 是值
+    // 直接遍历 table 时 i 是索引/key，v 是值
 }
 ```
 
-只写一个变量时拿到的是键，不是值。不要按 JavaScript/Python 习惯写成：
-
-```aardio
-for(v in tab) {
-    // v 不是值
-}
-```
+但 aardio 的泛型 `for ... in ...` 可以遍历任意迭代器。只写一个变量时得到的是 **该迭代器的第一个返回值**；例如 `process.each()`、`winex.each()` 的首个返回值并不等价于 table key。因此不能写一条“单变量 for 一定拿到 key”的通用 lint。
 
 ### `for in` 遇到 `null` 会停止
 
@@ -215,17 +214,16 @@ for(v in tab) {
 
 ## 函数、方法与 owner
 
-### 赋值不是表达式
+### 条件中的单 `=` 不能按 C/JS 的赋值表达式理解
 
-赋值是语句，不是表达式。
+aardio 的赋值是语句，不是 C/JS 那种可嵌入条件的赋值表达式；同时官方内核会在无歧义的等式表达式中把单 `=` 作为 `==` 处理。因此：
 
 ```aardio
-// 不要这样写
-while(a = 1) {
+if(a = 1) {
 }
 ```
 
-这类代码可能被解释成比较或其他语义，应该拆开写。
+不应被 lint 解释成“条件里误做了赋值”。为了可读性可以建议显式写 `==`，但只能作为 style/experimental 提示。
 
 ### 表达式不能随意独立成语句
 
@@ -330,7 +328,7 @@ UI 线程需要处理消息，长时间阻塞容易导致界面无响应。
 
 ### 库搜索顺序要记住
 
-`import` 大体按内置库、`~/lib` 公共库、`/lib` 工程库顺序查找。实际排查库行为时，优先阅读 `D:\tools\aardio\lib\` 中对应库源码。
+`import` 大体按内置库、`~/lib` 公共库、`/lib` 工程库顺序查找。实际排查库行为时，优先阅读 `<aardio>\lib\` 中对应库源码。
 
 ## 模式匹配
 
@@ -398,9 +396,9 @@ UI 线程中尤其要避免宽泛的 `.*`、`.+` 复杂模式。
 - `goto`
 - `static`
 - `finally`
-- `object:method()`
-- JavaScript spread `...`
-- JavaScript optional chaining `?.`
+- 不要按 Lua 语义假定 `object:method()`；但 `:` 本身是合法 aardio 运算符，不能靠子串检测
+- JavaScript spread `...`（同时注意 aardio 自己也有多参数/多返回值相关语法，不应只按字面三个点判断）
+- JavaScript optional chaining 语义；不能只按 `?.` 字节序列判断
 - JavaScript 箭头函数 `=>`
 - Lua `pairs` / `ipairs` / `pcall`
 - `switch` 语句，aardio 使用 `select`
@@ -412,22 +410,21 @@ UI 线程中尤其要避免宽泛的 `.*`、`.+` 复杂模式。
 
 优先级建议从低误报、高价值的规则开始：
 
-- `try/catch` 内出现 `return`、`break`、`continue` 时提示控制流陷阱。
-- 双引号/反引号字符串中出现疑似其他语言转义：`"\n"`、`"\t"`、`"\""`、`"\x.."`。
-- 参数列表尾部使用已知多返回值函数时提示加括号，例如 `tonumber(...)` 作为最后一个实参。
-- `+` 两侧出现字符串字面量、字符串变量名线索或函数调用时提示优先使用 `++`。
-- `a ? b : c` 中 `b` 明显为 `false`、`null`、`0` 时提示三元 falsey 陷阱。
-- 出现 `?.`、`=>`、`...`、`pairs(`、`ipairs(`、`pcall(`、`finally` 时提示非 aardio 写法。
-- `for(v in tab)` 只有一个变量时提示拿到的是键，不是值。
-- `thread.invoke(fn(...))` 形态提示应传函数本身和参数。
-- `io.file(...).write(...).close()` 形态提示 `write` 返回值不是文件对象。
-- 模式字符串中出现 `(...)` 后接 `*`、`+`、`?` 等正则习惯时提示 aardio pattern 差异。
-- 替换字符串中出现 `$1` 时提示 aardio 使用 `\1`。
-- `while(x = y)`、`if(x = y)` 形态提示赋值不是表达式，确认是否误写。
+- `try/catch` 内的 `return` 是真实语义陷阱，但只有在能可靠判断作用域时才提示；否则放入实验规则。
+- 参数列表尾部使用已知多返回值函数时提示加括号，例如 `tonumber(...)` 作为最后一个实参；这类规则需要白名单或 API 元数据降低误报。
+- `a ? b : c` 的 falsey fallback 语义可作为实验提示，不宜默认报警，因为官方源码有意大量使用。
+- 高置信度外语言写法可检查 `=>`、独立标识符 `pairs/ipairs/pcall`、`finally`、`~=`；不要只按 `?.`、`...`、`:` 子串判断。
+- `thread.invoke(fn(...))` 形态可提示应传函数本身和参数。
+- 模式字符串规则必须先确认调用的是 aardio pattern API；`string.indexOf` 等 literal API 不应参与。
+- 替换字符串中出现 `$1` 时可提示 aardio pattern replacement 通常使用 `\1`，但同样需要确认所在 API/参数位置。
+- 单 `=` 条件、`table.isArray()`、变量遮蔽等只适合作为可选 style/experimental，不应默认影响 Agent。
+- 已确认不应作为规则：字符串 `+` 的简单字面检测、单变量泛型 for=key、`io.file(...).write(...).close()` 错误、按字面 `?.` 或 `object:method()` 判错。
 
 ## 对后续维护 aalint 的工作记忆
 
-- 用户实际使用时会把 `aalint` 放在 `D:\tools\aardio\`，以便加载完整标准库和扩展库。
-- 遇到库行为不确定时，直接读 `D:\tools\aardio\lib\` 的源码，比猜测语言行为可靠。
+- 用户实际使用时会把 `aalint` 放在 aardio 安装目录（`<aardio>\`），以便加载完整标准库和扩展库。
+- 遇到库行为不确定时，直接读 `<aardio>\lib\` 的源码，比猜测语言行为可靠。
 - 先修正确性问题，再修性能，最后做架构优化。这个顺序适合当前项目。
 - 文档和测试用例应覆盖“其他语言习惯迁移到 aardio”的误用，因为这是最容易让 AI 和开发者写错的部分。
+
+> AI生成
