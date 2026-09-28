@@ -3,10 +3,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: '446d74b3-75d2-40c2-a6d9-382f25ab48a9'
-  PropagateID: '446d74b3-75d2-40c2-a6d9-382f25ab48a9'
-  ReservedCode1: '9d182cb6-3550-4d5a-972e-1fe01f055a11'
-  ReservedCode2: '9d182cb6-3550-4d5a-972e-1fe01f055a11'
+  ProduceID: 'bbd5c291-09a3-4a79-84e3-edfe6888f4a0'
+  PropagateID: 'bbd5c291-09a3-4a79-84e3-edfe6888f4a0'
+  ReservedCode1: '9724e2e1-7d66-4d82-89b5-5da14c0f2398'
+  ReservedCode2: '9724e2e1-7d66-4d82-89b5-5da14c0f2398'
 ---
 
 # aardio 踩坑记录（PITFALLS）
@@ -43,6 +43,25 @@ AIGC:
 ---
 
 ## 记录区（新记录追加在这一行下面）
+
+### 2026-09-28 class ctor 内裸调外层 namespace 的函数为 null——class 体是独立 namespace，必须 ..前缀别名
+- 状态：已验证（sourceEditor 库 ctor 裸调 loadRaw → `{Kind}:self(namespace) {Name}:'loadRaw' {Type}:null`；ctor 内建 `var loadRaw = ..sourceEditor.loadRaw` 修复，18 项逻辑测试 + UI 冒烟全过）
+- 场景：`namespace xxx; class form { ctor(){ 调用同文件 namespace 顶层的辅助函数 } }` 模式写窗体库（官方 settingForm 同款结构）
+- 现象：语法检查 PASS；运行时报 self(namespace) 里函数为 null——**class 体自身形成一个独立 namespace，ctor 的裸名字不穿透到外层 namespace**
+- 根因：与「namespace 内函数体 import 失效」同族——aardio 名字解析不按直觉穿透 class/namespace 边界
+- 解决：❌ ctor 内直接 `loadRaw()` → ✅ ctor 顶部建局部别名：`var loadRaw = ..sourceEditor.loadRaw; var string = ..string; var table = ..table;`（ctor 内闭包捕获 upvalue 正常）。官方另一路：class 同名 `namespace form{...}` 存辅助函数，ctor 裸调可解析到 class namespace
+
+### 2026-09-28 listview 控件在隔离/发布环境 this.add 后为 null——控件类需显式 import
+- 状态：已验证（ctor 诊断日志：btnAdd/editName=table 而 lst=null；文件顶部加 `import win.ui.ctrl.listview` 后 lst.count=19 正常加载）
+- 场景：窗体 DSG 用 `cls="listview"`，aalint 隔离运行或部分环境里 add 后访问 this.lst 报 `{Name}:'lst' {Type}:null`
+- 根因：win.ui 不自动加载全部控件类；主窗体一直正常是因为其他库链顺带引入了 listview——**依赖隐式加载不可靠，换个环境就翻车**
+- 解决：❌ 只 `import win.ui` 用非常规控件 → ✅ 文件顶部显式 `import win.ui.ctrl.listview;`（button/edit/static 常规控件无需，listview/plus 等建议显式）
+
+### 2026-09-28 aalint --run-isolated 跑 GUI 脚本"超时强杀"，真相常是未捕获异常弹了模态错误框等人点
+- 状态：已验证（多次"超时"实为 timer 回调里异常 → aardio 默认弹错误对话框模态等待 → 无人点击永久阻塞；套 try-catch 后立即拿到异常文本）
+- 场景：GUI 冒烟脚本超时被强杀，极易误判为死循环/死锁而疯狂排查消息循环
+- 解决：❌ 盯超时猜卡点 → ✅ timer/事件回调里套 `try{...}catch(e){ print(tostring(e)) }` 直接拿异常；配合 string.save 追加文件日志区分"真卡死"与"print 缓冲丢失"（子进程管道 print 尾部输出可能被强杀吞掉）
+- 补充（同轮实测）：timer 回调栈（WM_TIMER 分发中）里同步 close() 销毁窗口，在 doModal 模态循环中会死锁——官方 endModal 的安全栈是按钮回调（WM_COMMAND）；onClose 里绝不能调 endModal（其内部 close() 会 PostMessage 再入队 WM_CLOSE 造成无限重入），只设 `this[["dialogResult"]]` + `return true` 放行销毁，WM_DESTROY 会自动置 __continueModal=null 退出模态循环
 
 ### 2026-09-28 winform.onMinimize 必须 return true 才能阻止默认最小化（表面现象：show(false) "不生效"）
 - 状态：已验证（对照实验：无 return → isVisible=true isIconic=true，bug 复现；return true → isVisible=false isIconic=false，修复生效。官方标准写法见 examples\Windows\TrayIcon\tray.aardio）
