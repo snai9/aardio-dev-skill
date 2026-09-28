@@ -3,10 +3,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: '5fa00afe-032a-4cf4-81e6-ce600b8efab7'
-  PropagateID: '5fa00afe-032a-4cf4-81e6-ce600b8efab7'
-  ReservedCode1: '8152dbae-1cdf-41d7-ab42-a768c03cfe7e'
-  ReservedCode2: '8152dbae-1cdf-41d7-ab42-a768c03cfe7e'
+  ProduceID: '3868b605-9483-4a63-b75e-c9b3c5ef7c89'
+  PropagateID: '3868b605-9483-4a63-b75e-c9b3c5ef7c89'
+  ReservedCode1: '3c53ab57-a07f-4168-881f-d11b3f1cdd8d'
+  ReservedCode2: '3c53ab57-a07f-4168-881f-d11b3f1cdd8d'
 ---
 
 # aardio 开发规则
@@ -45,8 +45,12 @@ AIGC:
 - 方向不确定时及时纠偏，不要在错误方向上越走越远
 - 避免在一次对话中完成过于复杂的任务
 
-### 2.0.4 查库优先于猜测
+### 2.0.4 官方示例优先于其它途径，查库优先于猜测
 
+- **aardio 没有正式教程且持续更新，官方示例（`$AARDIO\examples\`）是与当前版本行为一致的"活文档"，遇到任何问题第一优先级找官方示例**
+- **检索顺序（强制）**：① `examples/` 官方示例（按关键词/控件名/API 名 grep，如 tray、minimize、sort）→ ② `lib/` 标准库源码（确认 API 真实行为与返回值流向）→ ③ `docs/` 文档 → ④ 坑库 `.trae/skills/aardio-traps/resources/pitfalls.md`（按错误信息搜）→ ⑤ 最后才是互联网/其他语言经验
+- 官方示例经常直接给出标准写法和陷阱规避注释，一句话顶半小时推理（实例：托盘最小化必须 `return true` 才能阻止默认最小化，标准写法即来自 `examples/Windows/TrayIcon/tray.aardio` 的原注释「阻击默认消息传递,取消最小化过程」）
+- 没有相关示例时，退回读 `lib/` 源码求证（消息处理链、返回值流向等以源码为准），再走其它途径
 - 不熟悉的库先查源码（`lib/` 目录）或范例（`examples/` 目录）
 - 使用 aardio 标准库前先确认库名和用法，**不假设某个库存在**
 - aardio 安装目录下有完整的文档（`docs/`）、范例（`examples/`）、标准库源码（`lib/`）
