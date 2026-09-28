@@ -3,10 +3,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: '98175bac-be32-4145-a960-1f48537972ad'
-  PropagateID: '98175bac-be32-4145-a960-1f48537972ad'
-  ReservedCode1: '56f73f0a-3a94-4032-8b33-d0b70e073469'
-  ReservedCode2: '56f73f0a-3a94-4032-8b33-d0b70e073469'
+  ProduceID: 'fea362eb-becf-4dc6-be95-83df72b31ede'
+  PropagateID: 'fea362eb-becf-4dc6-be95-83df72b31ede'
+  ReservedCode1: '63c70911-3b3f-4ad5-bbdb-bda6bd59faf7'
+  ReservedCode2: '63c70911-3b3f-4ad5-bbdb-bda6bd59faf7'
 ---
 
 # aardio 踩坑记录（PITFALLS）
@@ -43,6 +43,93 @@ AIGC:
 ---
 
 ## 记录区（新记录追加在这一行下面）
+
+### 2026-09-28 winform.onMinimize 必须 return true 才能阻止默认最小化（表面现象：show(false) "不生效"）
+- 状态：已验证（对照实验：无 return → isVisible=true isIconic=true，bug 复现；return true → isVisible=false isIconic=false，修复生效。官方标准写法见 examples\Windows\TrayIcon\tray.aardio）
+- 场景：daini 托盘最小化——onMinimize 里 winform.show(false) 隐藏窗口，但用户点最小化按钮后窗口仍最小化在任务栏
+- 现象：show(false) 之后任务栏按钮又回来了，窗口呈最小化状态；极易误判为"show(false) 不生效/被覆盖，需要延迟执行"
+- 根因：win.ui 的 WM_SYSCOMMAND 处理器（win/ui/_.aardio）写的是 `return this.onMinimize(lParam)`，wndproc 中**处理器返回非 null 才跳过 _defWindowProc**；而 aardio 函数**无显式 return 时返回 null**（不像 Ruby 自动返回末尾表达式）→ DefWindowProc(WM_SYSCOMMAND, SC_MINIMIZE) 继续执行 → ShowWindow(SW_MINIMIZE) 把刚隐藏的窗口重新显示为最小化 → 任务栏按钮回归
+- 解决：❌ `winform.onMinimize = function(){ winform.show(false); }`（末尾表达式不等于返回值）→ ✅ 末尾显式 `return true;`（官方示例原注释：「阻击默认消息传递,取消最小化过程」）。win.ui 中"事件处理器返回真值=拦截默认行为"是通用约定（onCancel 同理：`if( this.onCancel ) return this.onCancel()`）；排查这类问题直接读 win/ui/_.aardio 对应消息的处理链，返回值流向一目了然
+
+### 2026-09-28 thread.command 的 $ 异步调用没有 fallback：$name 只匹配 $name 处理器，不匹配同名非 $ 处理器（消息静默丢失）
+- 状态：已验证（最小实验：线程内 `nf.$noDollar("B")`，主线程只定义 `cmd.noDollar`（无 $）→ 收不到；定义 `cmd.$withDollar` → 收到）
+- 场景：daini 重构版选活永久卡「自动选活中...」——core 线程发 `notifier.$onCoreAllFailed(tried)`，main 定义 `cmd.onCoreAllFailed`（无 $）→ 8 个节点全试完后回调丢失，`isStarting` 永远 true，按钮全灰死锁
+- 现象：`$onCoreProgress`（有 $ 定义）正常显示进度「[8/8]」，而 Started/AllFailed 回调永远不来——**同一批回调一半通一半丢**，极易误判为线程崩溃
+- 根因：aardio thread.command 的 `$` 前缀 = 异步 post；post 消息严格匹配 `cmd.$name` 处理器，**没有回退到 `cmd.name` 的机制**
+- 解决：❌ 线程 `notifier.$xxx()` + 主线程 `cmd.xxx = function()` → ✅ **两边前缀必须严格一致**（都用 `$` 或都不用）；跨线程回调推荐统一用 `$` 异步（同步调用有死锁风险）。写回调清单时逐一核对前缀
+
+### 2026-09-28 null 与数字做大小比较（> >= < <=）直接抛运行时异常，不是返回 false
+- 状态：已验证（`var lat = null; lat >= 0` → 报错 `不支持此操作: compare number with null`；== / != 与 null 合法返回布尔）
+- 场景：JSON 反序列化字段缺失（如节点 latency 字段不存在）后直接 `if(n.latency >= 0)` 或 `n.latency > 0`
+- 现象：`不支持此操作: compare number with null` 运行时异常；若发生在 table.sort 比较函数内则被捕获报 `invalid order function for sorting`
+- 根因：aardio 的关系运算符对 null 与数字是非法操作（仅 ==/!= 允许 null 参与）
+- 解决：❌ `if(n.latency >= 0)` → ✅ 先归一化：`var v = tonumber(n.latency); v = (v === null) ? -1 : v;` 再比较；从 JSON/外部加载的数据必须先归一化数值字段再参与比较
+
+### 2026-09-28 table.sort 比较函数是单参数约定：function(b) + 内置 owner，双参数 function(a,b) 的 b 恒为 null（总根源，前条已订正）
+- 状态：已验证（13 次调用全量 trace：`a=元素 b=null`；owner 单参写法 4 组实验全对）
+- 场景：`table.sort(arr, function(a, b) return key(a) < key(b) end)` —— 按 Lua/C 惯性写双参数比较函数
+- 现象：b 恒为 null。若比较函数内对 null 做成员访问/数值比较（如 `score(b).latency`、`b.latency >= 0`）→ 抛异常被 sort 捕获报 `invalid order function for sorting`；若对 null 兜底返回 false → **不报错但排序结果完全乱序**（6 元素逆序排成 `5 2 1 3 4 0`）
+- 根因：aardio 的 table.sort 比较函数约定为**单参数**：`function(b)` 中 b 是被比较元素，**`owner` 是内置变量 = 基准元素本身**（非索引）。官方库实证 `lib/builtin/table.aardio:220`：`sort(keys,function(b){ return t[owner] < t[b]; })`。双参数写法只是碰巧第一参收到了 b（被当成 a），第二参落 null
+- 解决：❌ `table.sort(arr, function(a, b) return key(a) < key(b) end)` → ✅ `table.sort(arr, function(b) return key(owner) < key(b) end)`；复合键同理：先算 `rank(owner)/rank(b)` 再比较。已用 40 元素数值/30 对象/复合键三组实验验证完全正确
+- 关联：前一条「table.sort 比较函数会收到 nil 参数」为误诊，真相即本条（并非随机 nil 探测，而是调用约定本身）。null 与数字比较抛 `compare number with null` 见另一条
+
+### 2026-09-24 线程入口函数不能引用 namespace 级变量（thread.invoke 闭包 upvalue 丢失）
+- 状态：已验证（daini 项目 prober 实测：4 个测速线程全部静默崩溃，界面永久卡「测速中」）
+- 场景：`thread.invoke(worker, ...)` 传递一个定义在库文件 namespace 内的函数；worker 内部引用 namespace 级局部函数（如 `var probeOne = function...`）
+- 现象：线程报错 `{Attempt to}:call {Kind}:variable(upvalue) {Name}:'probeOne' {Type}:null`，线程静默死亡，主界面回调永远不来
+- 根因：`thread.invoke` 传参的函数在新线程中**闭包 upvalue 全部丢失**（函数体 bytecode 保留但外层局部变量不可见）；namespace 级 `var probeOne` 属于闭包 upvalue → null
+- 解决：❌ namespace 内 `var worker = function(...)` 引用 namespace 级 `var probeOne` → ✅ **线程入口函数必须定义在 namespace 外的文件顶层**（无 namespace），函数内 `import` 全部依赖并自包含；通过「共享全局表调用」的命名空间成员函数（如 `sources.fetchSourceNodes()`）不受影响，但「作为 thread.invoke 参数」的函数必须自包含
+
+### 2026-09-24 namespace 开放式中定义的函数，体内 import 全部失效（被解析为 namespace 成员 null）
+- 状态：已验证（最小复现：`namespace X;` + `var worker = function(){ import JSON; print(type(JSON)) }` → 打印 null）
+- 场景：namespace 声明覆盖到文件末尾，其中定义会被 thread.invoke 调用的函数，函数体内写 `import JSON; import table; import thread.command;`
+- 现象：函数内所有库变量都是 null，运行时报 `{Attempt to}: _get table {Kind}:variable(upvalue) {Name}:'JSON' {Type}:null`
+- 根因：`import` 在 namespace 上下文中被解析为「namespace 成员/namespace 级绑定」，不在函数作用域内创建局部变量；函数内裸引用被解析到 namespace 作用域（null）
+- 解决：❌ namespace 内函数体 `import xxx;` 使用 → ✅ 把需要跨线程的函数（worker/线程入口）放在**namespace 块外的文件顶层**（配合块状 `namespace X { }` 收纳其余成员）；非线程函数在 namespace 内用 `..` 前缀或顶部别名访问全局库
+
+### 2026-09-24 线程内 import 库是独立模块实例（nodes.load/save 必须在同一实例内成对）
+- 状态：已验证（daini 实测：coreAutoWorker 线程内 nodes.pickOrder() 返回空 → 回调 ALL FAILED tried=0；加 nodes.load() 后正常返回节点）
+- 场景：主线程 import nodes 加载仓库（nodes.load()），线程函数内再 import nodes 并调用 nodes.pickOrder()/all()
+- 现象：线程内拿到的 nodes 模块 list 为空（与主线程实例不共享），pickOrder 返回空数组，选活直接失败
+- 根因：aardio 每个线程的 import 产生独立模块实例，模块级变量（var list = {}）互不共享；线程内必须先 `nodes.load()` 读盘才能拿到仓库
+- 解决：线程内使用任何有模块级状态的库，**必须成对 load()/save()**（读盘 → 操作 → 写盘）；主线程在 `$onDone` 回调里再 `nodes.load()` 同步最新数据。测速/置顶状态要保留则线程内先 load 再 upsert
+
+### 2026-09-24 aalint --ui-smoke 无法创建 listview 控件（非代码 bug，测试环境限制）
+- 状态：已验证（最小复现：仅 form + listview + onDoubleClick 赋值即崩，button/plus 同模式正常）
+- 场景：用 `aalint --run --ui-smoke --timeout 8` 测试含 `cls="listview"` 的窗体
+- 现象：报错 `不支持此操作: _set table` + `名称:'lstNodes' 值:null`——listview 控件未创建，后续对其成员赋值（如 `.onDoubleClick = ...`）即崩；button 与 plus 控件同法测试正常
+- 根因：aalint ui-smoke 环境对 listview 控件初始化支持不完整（疑似 listview 需要额外的 Windows 子类化/列头初始化在 headless 环境中失败）
+- 解决：listview 相关 GUI 只能在真实 aardio IDE（F5 运行 / F7 发布）中测试，不可依赖 `aalint --ui-smoke`；对含 listview 的 main.aardio，编译检查 + lint 通过即可认为静态层面 OK，运行层面靠 F5/F7 验证
+
+### 2026-09-24 table.sort 比较函数会收到 nil 参数（aardio 运行时行为）【已订正：真相见 2026-09-28 单参数 owner 条目】
+
+- 状态：已订正（原结论「nil 探测」为误诊；真相：aardio table.sort 比较函数为单参数约定 `function(b)` + 内置 `owner`，双参数写的第二参恒为 null。详见 2026-09-28 条目）
+- 场景：namespace 内用 `table.sort(arr, function(a, b) { ... })` 排序节点数组，比较回调里访问 `a.favorite` / `b.latency` 等成员
+- 现象：运行时报错 `不支持此操作: _get table` + `变量名:'n' 值:null`——比较函数收到的参数为 nil
+- 根因：（订正）非随机 nil 探测；是调用约定本身：function(a,b) 的 b 恒 null
+- 解决：（订正）正确写法 `table.sort(arr, function(b) return key(owner) < key(b) end)`；本条原「nil 守卫」方案只会让排序乱序不报错，不可用
+
+
+### 2026-09-24 PowerShell 5.1 Get-Content -Raw 不指定编码读 UTF-8 文件按 GBK 解读，中文永久乱码
+- 状态：已验证（daini 项目 sources.json 实际损坏：「CF订阅」→「CF璁㈤槄」、「β」→「尾」）
+- 场景：用 PowerShell 脚本修改 aardio 项目里的 UTF-8 JSON 文件（Get-Content -Raw 读入 → 处理 → WriteAllText + UTF8Encoding 写回）
+- 现象：英文/数字内容正常，所有中文字符变成「璁㈤槄」类乱码且写回后固化（aardio 程序读出的 name 全是乱码）
+- 根因：PS 5.1 的 Get-Content **不带 -Encoding 参数时按系统 ANSI（GBK）解码**——UTF-8 文件的中文双字节被按 GBK 拆读成两个假字；后续写回 UTF-8 时乱码已成事实字符串，无法还原
+- 解决：❌ `Get-Content -Raw $f` → ✅ `Get-Content -Raw -Encoding UTF8 $f`；修改 aardio 项目文件（UTF-8 含中文）优先用 **aardio 自己的脚本**（string.load/string.save 按字节处理 + JSON.stringify 输出 UTF-8，天然无编码问题）或 Edit 工具，避免 PowerShell 读改写链路
+
+### 2026-09-24 双引号串里写模式 `\\.`：`\\` 是字面反斜杠而非转义点，string.find 静默失配
+- 状态：已验证（daini 项目验证脚本实测：断言恒 false，改 string.indexOf 后 true）
+- 场景：想用 `string.find(url, "^https://gitlab\\.com")` 判断 URL 前缀（以为要像 C 系语言那样 `\\.` 转义点号）
+- 现象：不报错，恒返回 null——即使 URL 明明以 https://gitlab.com 开头
+- 根因：aardio 双引号是**原样字符串**，`"\."` 已是「反斜杠+点」两个字面字符，模式语义 `\.` 正好是转义点；再写成 `"\\."` 就成了「字面反斜杠 `\\` + 通配 `.`」，要求目标里真有反斜杠，必然失配
+- 解决：❌ `string.find(s, "^https://gitlab\\.com")` → ✅ `string.find(s, "^https://gitlab\.com")`（双引号原样串里写单反斜杠即可）；纯前缀判断更稳的写法是 `string.indexOf(s, "https://gitlab.com") == 1`（字面查找无模式歧义）。与 2026-08-22「`\"` 不是转义引号」同根因：双引号串里 `\` 永远不转义
+
+### 2026-09-24 用 `string.find(data,"outbounds")` 粗检下载内容：损坏文件骗过粗检且 break 后不再试下一镜像
+- 状态：已验证（daini 项目实测：gitlabip.xyz 镜像 singbox 家族全是「两个完整 JSON 拼接」的 2845 字节损坏文件，含 "outbounds" 字样 → 粗检通过 → JSON.tryParse 失败 → 整条源报废）
+- 场景：下载远端 sing-box/clash 配置后，先 `string.find(data, "outbounds")` 确认是配置再收，失败换下一镜像
+- 现象：镜像文件损坏（同步程序把两个 JSON 追加成一个文件）时粗检照样通过，break 收货后 JSON.parse 失败，循环已退出不再尝试后续镜像——「多镜像容错」完全失效，用户侧表现为整个节点池全不可用
+- 根因：关键词粗检 ≠ 格式校验；验证动作（JSON 解析/结构提取）必须发生在「决定是否 break」之前，而不是收货之后
+- 解决：❌ 先 find 关键词 → break → 循环外再 JSON.parse（失败即放弃）→ ✅ 循环内下载后立即 `JSON.tryParse(data)` + 提取目标字段成功才 break；解析/提取失败记入 lastErr 继续下一镜像。测试脚本要备一份真实损坏样本（string.load 双拼文件 → tryParse 应返回 null）
 
 ### 2026-09-24 aalint --ide-publish 发布时序：exe 延迟生成 + --ide-publish-refresh 必须在工程目录运行
 - 状态：已验证（升级 aalint v2.4.1 实测两轮发布）
