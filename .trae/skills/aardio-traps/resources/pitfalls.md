@@ -791,6 +791,24 @@ AIGC:
 - 解决：❌ `cls="button"` + oncommand → ✅ 行用 `cls="static";transparent=1`（点击穿透到窗体），窗体 wndproc 拦截 `0x201/*_WM_LBUTTONDOWN*/`，从 lParam 高 16 位取 Y 坐标，`math.floor((y-topH)/rowH)+1` 算出行号，按 names 数组索引切换。彻底绕开 button 控件
 - 教训：aardio popup 窗体里需要可点击区域时，不要依赖 button.oncommand；用 static+transparent+窗体 wndproc 坐标命中更可靠
 
+### 2026-09-29 listview 右键菜单不弹：通知码负数比较永假 + selIndex 拿不到右键行
+- 状态：已验证（用户反馈"右键节点没有任何菜单提示"，修复后按官方示例改法）
+- 场景：daini 节点列表 onnotify 里判 `code == -5/*_NM_RCLICK*/` 弹右键菜单
+- 现象：右键任何节点都不弹菜单，无任何反馈
+- 根因（两个叠加）：
+  ① aardio 读 WM_NOTIFY 的 code 是无符号数，NM_RCLICK 实际值是 `0xFFFFFFFB`（4294967291），写 `-5` 永远比较不上——官方示例全部用 `0xFFFFFFFB` 比较（`case 0xFFFFFFFB/*_NM_RCLICK*/`）
+  ② Win32 listview 右键**不会自动选中行**，`selIndex` 返回的是上次左键选中的行（没点过就是空）——就算条件进去了，没先左键点过也直接 return 不弹菜单
+- 解决：条件改 `code == 0xFFFFFFFB`；行号改 `var row = winform.lstNodes.hitTest()`（无参调用自动取 win.getMessagePos() 当前消息坐标，官方 listview.aardio 内置方法），拿到 row 后再 `selIndex = row` 选中该行（Windows 右键菜单标准 UX）
+- 教训：aardio 通知码一律写无符号十六进制（`0xFFFFFFFB`），不要写负数（`-5`）；listview 右键/悬停类操作要用 `hitTest()` 拿实际点击行，`selIndex` 只是左键选中的行
+
+### 2026-09-29 listview.onRightClick 会整体覆盖 prenotify 表，与 onDoubleClick 互斥
+- 状态：代码确认（读官方 lib\win\ui\ctrl\listview.aardio 源码 line 1262-1307）
+- 场景：daini 节点列表已用 `onDoubleClick`（双击切换节点），想加 `onRightClick`（右键菜单）
+- 现象：设 `onRightClick` 后双击失效（或反之）
+- 根因：listview 的 `onRightClick`/`onDoubleClick`/`onClick`/`onGetDispItem` 等 setter 内部都是 `owner.prenotify = { [通知码] = handler }` **整体赋值**——后设的把先设的 prenotify 条目全清掉，两者只能活一个
+- 解决：同一 listview 需要多个通知事件时，用 `onnotify`（通用分发，不占用 prenotify）里 switch code 处理；或把双击也搬进 onnotify（0xFFFFFFFD/*_NM_DBLCLK*/）
+- 教训：aardio listview 的 `on*Click` 系列事件setter 互斥（都写同一个 prenotify 表），需要并存就用 onnotify + code 分发
+
 ### 2026-09-18 enableDpiScaling 后设计像素 ≠ 实际像素，坐标命中必须读控件实际位置
 - 状态：已验证（用户反馈点击行号错位：点测试行却切换到电子政务网）
 - 场景：DNSwitch 左键面板用 `frm.enableDpiScaling("init")` 启用 DPI 缩放，行高 topH=118/rowH=34 是设计像素，WM_LBUTTONDOWN 的 lParam 是实际像素
