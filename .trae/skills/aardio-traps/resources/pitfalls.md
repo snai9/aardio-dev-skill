@@ -44,6 +44,37 @@ AIGC:
 
 ## 记录区（新记录追加在这一行下面）
 
+### 2026-09-29 sys.mediaFoundation.reader 复用位图：close 会 dispose 位图——必须先 saveToBuffer 再 close
+- 状态：已验证（先 close 后取数据 → GetImageWidth 报 Invalid POINTER 实际 null；调整顺序后 PNG 2MB 正常落盘）
+- 场景：用 v44.6 新库 sys.mediaFoundation.reader 截取视频尾帧（seek→readFrame→存 PNG）
+- 现象：`rd.readFrame()` 返回位图后我先 `rd.close()` 再 `bmp.saveToBuffer()`，报 `GetImageWidth 预期: Invalid POINTER! 实际获取: null`；第一次测试 PNG 0B 也是同一原因
+- 根因：reader.release 会 `obj.$bitmap.dispose()`（读源码可见 close→release 链）；readFrame 返回的位图是**读取器内部复用缓冲**（文档注明"下次读取会被覆盖，需要保留请调用 copy()"），close 即销毁，之后访问 pImage 就是 null
+- 解决：❌ `var bmp = rd.readFrame(); rd.close(); bmp.saveToBuffer(...)` → ✅ **先取数据再关**：`var bmp = rd.readFrame(); var buf = bmp.saveToBuffer("*.png"); rd.close(); string.save(path, buf)`。另注：该复用位图上 `bmp.copy()` 也抛同样错误（UserInputBuf 模式位图不支持 clone），别走 copy 路线
+- 附带收获：reader 一个调用同时拿到 duration/fps/分辨率/**音视频流 subtype**，MP3 的 subtype=MP3/AAC/WMA 可用于上传前预检（治后端校验流编码不校验扩展名的 invalid_media）
+
+### 2026-09-29 aardio v44.6 环境下 aalint --ui-smoke 通用异常退出（0xC0000409），与被测代码无关
+- 状态：已验证（git stash 对照：基线版本与含新改动版本同报 exit=-1073740791 = STATUS_STACK_BUFFER_OVERRUN；用户 IDE 内 F7/F5 正常运行）
+- 场景：aardio 升级 v44.6.1 后对生视频项目跑 `aalint --run --ui-smoke --timeout 15 main.aardio`
+- 现象：所有 GUI 程序冒烟必崩 0xC0000409，极易误判为代码问题；纯逻辑 `--run --capture` 不受影响，全部正常
+- 根因：aalint 冒烟环境与新版 aardio 内核的兼容性问题（具体成因未深究；v44.0 起"内核更新与优化"+ 内核升级要求旧编译代码重新编译，疑似相关）
+- 解决：❌ 拿 --ui-smoke 结果当回归依据 → ✅ v44.6 下 GUI 验证改用：①核心逻辑抽独立脚本 `--run --capture` 执行验证 ②让用户 IDE 内 F7/F5 实测；aalint 编译检查（不带 --run）仍可靠
+
+### 2026-09-29 process.popen.waitOne 只等不读管道——子进程 stderr 写满 64KB 缓冲即永久死锁（ffmpeg 挂死真凶）
+- 状态：根因已确证（lib/process/popen.aardio 源码 + intellisense 原文注释）；each 修复版已写入 main.aardio 但因验证工具故障未完成执行验证
+- 场景：aardio 调 `process.popen("ffmpeg", {参数数组})` 合并音轨，`p.waitOne(60000)` 永远超时；PowerShell 直跑同命令 3.2 秒成功；aardio 侧留下 0-48 字节 .tmp 文件 + 残留 ffmpeg 进程
+- 现象：同命令同参数，PowerShell 秒级完成、aardio waitOne 死等到超时，子进程还活着（卡在写 stderr）
+- 根因：popen 源码 `waitOne` 只 `thread.waitOne(handle)` 等进程退出、**从不读管道**；ffmpeg 全部日志走 stderr（横幅+每个输出帧刷新进度），写满默认 64KB 管道缓冲后被 OS 阻塞挂起。库内 intellisense 原文明说：「如果被调用进程写满输出缓冲区，而调用进程没有读取，则被调用进程会一直等待，此函数将无法返回」。PowerShell 直跑无管道所以不复现
+- 解决：❌ `var ok,out,err,code = p.waitOne(60000)` （输出大的程序死锁）→ ✅ 用 `each` 边读边等：`for(out,err in p.each(100,60000)){ ...时间戳总超时判断... }`（each 内部 peek 读管道防死锁）；超时后 `p.terminate(); p.close()` 清理；注意 each 第二参是"无输出累计超时"，总时长限制要自己在循环体内用 time.tick 判；**循环体不能读到一次输出就 break**（进程未结束 getExitCode 拿不到真实退出码），要等迭代器自然耗尽或总超时。输出极小的调用（如 ffmpeg -sseof 截单帧，stderr 仅几行）waitOne 仍安全
+- 同族补充（上一轮踩的，归并到此条）：ffmpeg aloop 滤镜参数 `size=2e+09` 科学计数法解析异常导致无限吞内存——**必须写整数 `2147483647`**
+
+### 2026-09-29 Agnes 视频 API invalid_media：校验的是音频流编码参数，不是文件扩展名（换容器无效）
+- 状态：已验证（用户三组对照实测：WMA 原文件失败 → ffmpeg 转码成 .mp3 后仍失败 → 重新下载正常 MP3 成功且参考音频作为背景音乐生效）
+- 场景：生视频工具参考音频上传，后端报 invalid_media
+- 现象：扩展名/mp3 容器正确也照样报错；同一首曲子重新下载的 mp3 一次通过
+- 根因：后端校验音频流的实际编码参数（编码器/采样率等），不是扩展名或容器；**ffmpeg 转码默认参数产物仍可能不合规**（具体哪个参数不合规未深究，测试文件已删无法 ffprobe 对比）
+- 解决：❌ "转个格式就能过"（wma→mp3 转码，无效）→ ✅ 用重新下载的标准 MP3（44.1kHz 普通编码），或转码时显式指定标准参数（`-ar 44100 -ac 2 -b:a 192k` 未验证）；给用户的建议是直接换音频源文件。参考音频会被 Agnes 用作视频背景音乐，务必选 2-12 秒能代表节奏的片段
+
+
 ### 2026-09-28 class ctor 内裸调外层 namespace 的函数为 null——class 体是独立 namespace，必须 ..前缀别名
 - 状态：已验证（sourceEditor 库 ctor 裸调 loadRaw → `{Kind}:self(namespace) {Name}:'loadRaw' {Type}:null`；ctor 内建 `var loadRaw = ..sourceEditor.loadRaw` 修复，18 项逻辑测试 + UI 冒烟全过）
 - 场景：`namespace xxx; class form { ctor(){ 调用同文件 namespace 顶层的辅助函数 } }` 模式写窗体库（官方 settingForm 同款结构）
@@ -199,6 +230,15 @@ AIGC:
   - ❌ `tostring(funcReturnsNothing())` → ✅ `var v = funcReturnsNothing(); tostring(v : null)`（先接收再兜底）
   - 日常代码用 `if(io.exist(path))` 判存在不受影响（null 是 falsy）；仅 `++` 连接或函数参数传递时注意
 - 教训：aardio 中"返回 null"和"返回 0 个值"可能有隐微差异（前者 tostring 正常、后者可能报缺失参数）；`++` 连接前对可能为 null 的表达式一律先 `tostring(expr)` 或 `expr : ""` 兜底
+
+### 2026-09-29 aardio 空字符串是 truthy：`!""` 为 false，「文本是否为空」判断必须比长度，不能 `if(!str)`
+- 状态：已验证（`string.trim("")` 返回空字符串；`!string.trim("")` 结果为 false，`#string.trim("") == 0` 才为 true）
+- 场景：音频列表清空同步逻辑 `if(!string.trim(edit.text)) refAudios = {}` —— 用户清空输入框后内存数组纹丝不动；单测用例 5「清空同步」FAIL 暴露
+- 根因：aardio 中空字符串是**真值**（与 Lua/Python 相反），`!""` = false；`"" and x` 也走 x 分支。用 `!str` 判断空串永远不成立，静默失效不报错
+- 解决：
+  - ❌ `if(!string.trim(s))` → ✅ `if(#string.trim(s) == 0)` 或 `if(string.trim(s) == "")`
+  - 同理检查其他"判空"场景：`!s`、`s or 默认值`（空串 truthy → or 不触发）、`if(s)` 分支对空串永远为真
+- 教训：aardio 判空统一用 `#s == 0`；凡写了 `if(!xxx)` 的"空值兜底"都要再审一遍——null 是 falsy、空字符串是 truthy、0 是 falsy 还是 truthy 也要实测，三种空态语义不同
 
 ### 2026-09-23 raw.explore(path) 不带参数对文件退化为"用默认程序打开"；带 "/select" 才是"打开文件夹并选中"
 - 状态：已验证（用户反馈"打开文件夹结果直接播放了视频"；docs 确认 `raw.explore(path,"/select")` 正确用法）
