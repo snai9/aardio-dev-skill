@@ -791,6 +791,14 @@ AIGC:
 - 解决：❌ `cls="button"` + oncommand → ✅ 行用 `cls="static";transparent=1`（点击穿透到窗体），窗体 wndproc 拦截 `0x201/*_WM_LBUTTONDOWN*/`，从 lParam 高 16 位取 Y 坐标，`math.floor((y-topH)/rowH)+1` 算出行号，按 names 数组索引切换。彻底绕开 button 控件
 - 教训：aardio popup 窗体里需要可点击区域时，不要依赖 button.oncommand；用 static+transparent+窗体 wndproc 坐标命中更可靠
 
+### 2026-09-29 static 控件（transparent 标签）必须 notify=1 才能收到点击 oncommand
+- 状态：已验证（daini 出口位置标签做「点击重查」入口，加 notify=1 前点击无反应）
+- 场景：把 static 标签当可点击入口（label 当链接按钮用），直接 `winform.lblXxx.oncommand = function(){...}`
+- 现象：点击标签完全没反应，oncommand 永远不触发，也不报错
+- 根因：Win32 static 控件默认**没有 SS_NOTIFY 样式**，不发 STN_CLICKED 通知；aardio 里 `notify=1` 即 SS_NOTIFY，不加则点击消息直接丢弃
+- 解决：控件定义加 `notify=1`（`lblLoc={cls="static";...;transparent=1;notify=1;z=15}`），oncommand 即可触发。transparent=1 不影响点击命中（官方示例 hf-z-image 的「优化提示词」链接按钮就是这个组合）
+- 教训：aardio 里 static 当按钮/链接用，必须 notify=1；transparent 只是绘制透明，不是点击穿透
+
 ### 2026-09-29 listview 右键菜单不弹：通知码负数比较永假 + selIndex 拿不到右键行
 - 状态：已验证（用户反馈"右键节点没有任何菜单提示"，修复后按官方示例改法）
 - 场景：daini 节点列表 onnotify 里判 `code == -5/*_NM_RCLICK*/` 弹右键菜单
